@@ -1,6 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { db, seedLocalSampleData } from './features/offlineStore'
 import './App.css'
+import { 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  signInWithPopup, 
+  signOut, 
+  onAuthStateChanged 
+} from 'firebase/auth'
+import { auth, googleProvider } from './features/firebase'
 
 // Safe UUID generator supporting non-secure contexts (HTTP network IPs)
 const generateUUID = () => {
@@ -231,10 +239,15 @@ function App() {
   const userXP = currentUser ? currentUser.totalXP : 0
   const userBadges = currentUser ? currentUser.badges || [] : []
 
-  const handleLogout = () => {
-    localStorage.removeItem('ecosphere-user-id')
-    setCurrentUser(null)
-    setActiveTab('employee')
+  const handleLogout = async () => {
+    try {
+      await signOut(auth)
+      localStorage.removeItem('ecosphere-user-id')
+      setCurrentUser(null)
+      setActiveTab('employee')
+    } catch (err) {
+      console.error("Logout failed:", err)
+    }
   }
 
   // Load theme from localStorage
@@ -275,19 +288,57 @@ function App() {
     }
   }
 
-  // Auto-login from session
+  // Auto-login from Firebase session and local DB sync
   useEffect(() => {
-    const checkSession = async () => {
-      const savedId = localStorage.getItem('ecosphere-user-id')
-      if (savedId && allUsers.length > 0) {
-        const found = allUsers.find(u => u.id === savedId)
-        if (found) {
-          setCurrentUser(found)
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        try {
+          let localUser = await db.users.get(firebaseUser.uid)
+          if (!localUser) {
+            localUser = {
+              id: firebaseUser.uid,
+              name: firebaseUser.displayName || firebaseUser.email.split('@')[0],
+              username: firebaseUser.email,
+              password: '', // Firebase handles password
+              role: 'Employee', // Default role for new sign-ups
+              departmentId: 'dept-admin', // Default department
+              totalXP: 0,
+              badges: [],
+              sync_status: 'pending'
+            }
+            await db.users.add(localUser)
+            await loadDBData()
+            handleSync()
+          } else {
+            // Update local fields if they changed in Firebase (like displayName)
+            let updated = false
+            if (firebaseUser.displayName && localUser.name !== firebaseUser.displayName) {
+              localUser.name = firebaseUser.displayName
+              updated = true
+            }
+            if (localUser.username !== firebaseUser.email) {
+              localUser.username = firebaseUser.email
+              updated = true
+            }
+            if (updated) {
+              localUser.sync_status = 'pending'
+              await db.users.put(localUser)
+              await loadDBData()
+              handleSync()
+            }
+          }
+          setCurrentUser(localUser)
+          localStorage.setItem('ecosphere-user-id', firebaseUser.uid)
+        } catch (err) {
+          console.error("Error linking Firebase user to local DB:", err)
         }
+      } else {
+        setCurrentUser(null)
+        localStorage.removeItem('ecosphere-user-id')
       }
-    }
-    checkSession()
-  }, [allUsers])
+    })
+    return () => unsubscribe()
+  }, [])
 
   // Adjust active tab based on logged-in user role
   useEffect(() => {
@@ -636,57 +687,57 @@ function App() {
     e.preventDefault()
     if (!loginUsername || !loginPassword) return
 
-    const matched = allUsers.filter(u => u.username.toLowerCase() === loginUsername.toLowerCase())
-    if (matched.length === 0) {
-      alert('⚠️ Username not found.')
-      return
+    try {
+      const email = loginUsername.includes('@') ? loginUsername : `${loginUsername.toLowerCase()}@ecosphere.local`
+      await signInWithEmailAndPassword(auth, email, loginPassword)
+      setLoginUsername('')
+      setLoginPassword('')
+    } catch (err) {
+      alert(`❌ Login failed: ${err.message}`)
     }
-
-    const user = matched[0]
-    if (user.password !== loginPassword) {
-      alert('❌ Incorrect password.')
-      return
-    }
-
-    localStorage.setItem('ecosphere-user-id', user.id)
-    setCurrentUser(user)
-    setLoginUsername('')
-    setLoginPassword('')
   }
 
   const handleRegisterSubmit = async (e) => {
     e.preventDefault()
     if (!registerName || !registerUsername || !registerPassword) return
 
-    const matched = allUsers.filter(u => u.username.toLowerCase() === registerUsername.toLowerCase())
-    if (matched.length > 0) {
-      alert('⚠️ Username is already taken.')
-      return
-    }
-
-    const newUsr = {
-      id: 'u-' + Math.random().toString(36).substr(2, 4),
-      name: registerName,
-      username: registerUsername,
-      password: registerPassword,
-      role: registerRole,
-      departmentId: registerDeptId,
-      totalXP: 0,
-      badges: [],
-      sync_status: 'pending'
-    }
-
     try {
-      await db.users.add(newUsr)
+      const email = registerUsername.includes('@') ? registerUsername : `${registerUsername.toLowerCase()}@ecosphere.local`
+      const userCredential = await createUserWithEmailAndPassword(auth, email, registerPassword)
+      const user = userCredential.user
+
+      const newUsr = {
+        id: user.uid,
+        name: registerName,
+        username: email,
+        password: '', // Firebase handles password
+        role: registerRole,
+        departmentId: registerDeptId,
+        totalXP: 0,
+        badges: [],
+        sync_status: 'pending'
+      }
+
+      await db.users.put(newUsr)
       setRegisterName('')
       setRegisterUsername('')
       setRegisterPassword('')
       await loadDBData()
-      alert('🎉 Registration successful! You can now sign in using your credentials.')
+      alert('🎉 Registration successful! Welcome to EcoSphere.')
       setAuthView('login')
       handleSync()
     } catch (err) {
-      console.error(err)
+      alert(`❌ Registration failed: ${err.message}`)
+    }
+  }
+
+  const handleGoogleSignIn = async () => {
+    try {
+      const result = await signInWithPopup(auth, googleProvider)
+      const user = result.user
+      alert(`🎉 Welcome ${user.displayName || 'Operator'}! Signed in with Google.`)
+    } catch (err) {
+      alert(`❌ Google Sign-In failed: ${err.message}`)
     }
   }
 
@@ -1168,14 +1219,14 @@ function App() {
                 {authView === 'login' ? (
                   <form onSubmit={handleLoginSubmit}>
                     <div className="tactile-input-container">
-                      <label className="tactile-label" htmlFor="login-user">Username</label>
+                      <label className="tactile-label" htmlFor="login-user">Username or Email</label>
                       <input 
                         id="login-user"
                         type="text" 
                         className="tactile-input" 
                         value={loginUsername}
                         onChange={(e) => setLoginUsername(e.target.value)}
-                        placeholder="Enter username"
+                        placeholder="Enter username or email"
                         required
                       />
                     </div>
@@ -1193,6 +1244,27 @@ function App() {
                     </div>
                     <button type="submit" className="tactile-btn primary machine-footer-btn" style={{ marginTop: '10px' }}>
                       Authenticate Console
+                    </button>
+
+                    <div style={{ display: 'flex', alignItems: 'center', margin: '15px 0' }}>
+                      <hr style={{ flex: 1, border: '0', borderTop: '1px solid var(--border-color)' }} />
+                      <span style={{ padding: '0 10px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>OR</span>
+                      <hr style={{ flex: 1, border: '0', borderTop: '1px solid var(--border-color)' }} />
+                    </div>
+
+                    <button 
+                      type="button" 
+                      onClick={handleGoogleSignIn} 
+                      className="tactile-btn secondary machine-footer-btn"
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', width: '100%', padding: '12px' }}
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                        <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                        <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" fill="#FBBC05"/>
+                        <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335"/>
+                      </svg>
+                      Sign In with Google
                     </button>
 
                     <div className="debossed-panel" style={{ marginTop: '20px', padding: '12px', borderRadius: '10px', fontSize: '0.75rem', lineHeight: '1.4', color: 'var(--text-muted)' }}>
