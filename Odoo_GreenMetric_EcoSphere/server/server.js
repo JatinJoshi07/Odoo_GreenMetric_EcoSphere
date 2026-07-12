@@ -2,7 +2,7 @@ import express from 'express'
 import cors from 'cors'
 import dotenv from 'dotenv'
 import { connectDB } from './db.js'
-import { Department, User, EmissionFactor, Challenge } from './models.js'
+import { Department, User, EmissionFactor, Challenge, CarbonTransaction, CsrParticipation, ComplianceIssue } from './models.js'
 
 dotenv.config()
 
@@ -17,9 +17,28 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', message: 'EcoSphere API is running' })
 })
 
-app.post('/sync', (req, res) => {
-  const payload = req.body
-  res.json({ status: 'synced', received: payload })
+app.post('/sync', async (req, res) => {
+  const { carbon_transactions, csr_participations, compliance_issues } = req.body
+  try {
+    if (carbon_transactions && carbon_transactions.length > 0) {
+      for (const tx of carbon_transactions) {
+        await CarbonTransaction.findOneAndUpdate({ id: tx.id }, tx, { upsert: true })
+      }
+    }
+    if (csr_participations && csr_participations.length > 0) {
+      for (const csr of csr_participations) {
+        await CsrParticipation.findOneAndUpdate({ id: csr.id }, csr, { upsert: true })
+      }
+    }
+    if (compliance_issues && compliance_issues.length > 0) {
+      for (const issue of compliance_issues) {
+        await ComplianceIssue.findOneAndUpdate({ id: issue.id }, issue, { upsert: true })
+      }
+    }
+    res.json({ status: 'synced', message: 'Data successfully saved to MongoDB' })
+  } catch (error) {
+    res.status(500).json({ status: 'error', message: error.message })
+  }
 })
 
 // Dev seeding endpoint to initialize master data
