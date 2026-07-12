@@ -208,8 +208,36 @@ function SkeletonCard() {
   )
 }
 
+// Confetti Gamification Component
+function Confetti({ active }) {
+  if (!active) return null
+  const particles = Array.from({ length: 60 })
+  return (
+    <div style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 9999, overflow: 'hidden' }}>
+      {particles.map((_, i) => {
+        const tx = (Math.random() - 0.5) * 400 + 'px'
+        const ty = (Math.random() - 1.2) * 500 + 'px'
+        const rot = Math.random() * 360 + 'deg'
+        const delay = Math.random() * 0.2 + 's'
+        const color = ['#27AE60', '#1ABC9C', '#F1C40F', '#E74C3C', '#3498DB', '#9B59B6'][Math.floor(Math.random() * 6)]
+        return (
+          <div key={i} style={{
+            position: 'absolute', left: '50%', top: '50%',
+            width: '8px', height: '16px', backgroundColor: color,
+            '--tx': tx, '--ty': ty, '--rot': rot,
+            animation: `confettiBurst 1s ease-out ${delay} forwards`
+          }} />
+        )
+      })}
+    </div>
+  )
+}
+
 // ─── MAIN APP ───────────────────────────────────────────────────
 function App() {
+  const [showConfetti, setShowConfetti] = useState(false)
+  const prevLevelIdx = useRef(0)
+
   const [page, setPage] = useState('landing')
   const [theme, setTheme] = useState('light')
   const [online, setOnline] = useState(true)
@@ -250,9 +278,22 @@ function App() {
   // Audit trail
   const [auditLog, setAuditLog] = useState([])
   const addAudit = useCallback((type, msg) => {
-    const time = new Date().toLocaleTimeString('en-US', { hour12: false })
-    setAuditLog(prev => [{ time, type, msg, id: Date.now() }, ...prev].slice(0, 40))
+    db.audits.add({ id: generateUUID(), type, message: msg, timestamp: new Date().toISOString() })
   }, [])
+
+  // Level up confetti effect
+  useEffect(() => {
+    if (currentUser) {
+      const lv = getLevel(currentUser.totalXP || 0)
+      if (lv.levelIdx > prevLevelIdx.current) {
+        setShowConfetti(true)
+        setTimeout(() => setShowConfetti(false), 2000)
+      }
+      prevLevelIdx.current = lv.levelIdx
+    } else {
+      prevLevelIdx.current = 0
+    }
+  }, [currentUser?.totalXP, currentUser])
 
   // Form states
   const [carbonFuelSource, setCarbonFuelSource] = useState('Fleet Fuel')
@@ -304,7 +345,7 @@ function App() {
   }, [currentUser, theme])
 
   // ── DB LOAD ──────────────────────────────────────────────────
-  const loadDBData = async () => {
+  const loadDBData = useCallback(async () => {
     try {
       await seedLocalSampleData()
       const [cLogs, sLogs, compIssues, depts, efs, chs, usrs] = await Promise.all([
@@ -328,7 +369,7 @@ function App() {
       console.error('DB load failed:', e)
       setLoading(false)
     }
-  }
+  }, [])
 
   // ── FIREBASE AUTH ────────────────────────────────────────────
   useEffect(() => {
@@ -367,7 +408,7 @@ function App() {
       }
     })
     return () => unsub()
-  }, [])
+  }, [loadDBData])
 
   // ── ROLE TAB ADJUSTMENT ──────────────────────────────────────
   useEffect(() => {
@@ -388,7 +429,7 @@ function App() {
   useEffect(() => {
     const keys = Object.keys(emissionFactors)
     if (keys.length && !keys.includes(carbonFuelSource)) setCarbonFuelSource(keys[0])
-  }, [emissionFactors])
+  }, [emissionFactors, carbonFuelSource])
 
   const calculatedEmissions = useMemo(() => {
     const amt = parseFloat(carbonAmount)
@@ -505,7 +546,7 @@ function App() {
   }
 
   useEffect(() => { if (online) handleSync() }, [online])
-  useEffect(() => { loadDBData().then(() => { if (online) handleSync() }) }, [])
+  useEffect(() => { loadDBData().then(() => { if (online) handleSync() }) }, [loadDBData, online])
 
   // ── LOGOUT ───────────────────────────────────────────────────
   const handleLogout = async () => {
@@ -1795,6 +1836,9 @@ function App() {
         <p>EcoSphere Sustainability Console · Powered by <span>Odoo GreenMetric</span></p>
         <p>Local-First Zero-Trust Architecture · © 2026</p>
       </footer>
+
+      {/* GLOBAL CONFETTI OVERLAY */}
+      <Confetti active={showConfetti} />
     </main>
   )
 }
