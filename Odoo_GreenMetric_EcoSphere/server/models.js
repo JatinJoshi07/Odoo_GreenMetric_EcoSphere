@@ -17,6 +17,8 @@ const DepartmentSchema = new mongoose.Schema({
 const UserSchema = new mongoose.Schema({
   id: { type: String, required: true, unique: true, index: true },
   name: { type: String, required: true },
+  username: { type: String, required: true, unique: true, index: true },
+  password: { type: String, required: true },
   departmentId: { type: String, default: '' },
   role: { type: String, required: true, enum: ['System Admin', 'Department Head', 'Employee'] },
   totalXP: { type: Number, default: 0 },
