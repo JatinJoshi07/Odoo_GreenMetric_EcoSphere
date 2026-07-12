@@ -27,9 +27,9 @@ async function seed() {
 
 
     const seedUsers = [
-      { id: 'u-001', name: 'Jatin', departmentId: 'dept-eng', role: 'System Admin', totalXP: 1200, badges: ['Sustainably Starter', 'CSR Champion'] },
-      { id: 'u-002', name: 'Sarah', departmentId: 'dept-log', role: 'Department Head', totalXP: 450, badges: ['Eco Driver'] },
-      { id: 'u-003', name: 'Michael', departmentId: 'dept-admin', role: 'Employee', totalXP: 100, badges: [] }
+      { id: 'u-001', name: 'Jatin', username: 'jatin', password: 'password123', departmentId: 'dept-eng', role: 'System Admin', totalXP: 1200, badges: ['Sustainably Starter', 'CSR Champion'] },
+      { id: 'u-002', name: 'Sarah', username: 'sarah', password: 'password123', departmentId: 'dept-log', role: 'Department Head', totalXP: 450, badges: ['Eco Driver'] },
+      { id: 'u-003', name: 'Michael', username: 'michael', password: 'password123', departmentId: 'dept-admin', role: 'Employee', totalXP: 100, badges: [] }
     ]
     await User.insertMany(seedUsers)
     console.log('✓ Seeded Users')

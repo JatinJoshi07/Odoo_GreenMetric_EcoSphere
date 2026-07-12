@@ -201,40 +201,41 @@ function App() {
   const [online, setOnline] = useState(true) // offline simulation mode
   const [syncing, setSyncing] = useState(false)
   const [syncMessage, setSyncMessage] = useState('')
+  const [activeTab, setActiveTab] = useState('deptHead') // 'deptHead', 'admin', 'unauthorized'
+
+  // Authentication State
+  const [currentUser, setCurrentUser] = useState(null)
+  const [authView, setAuthView] = useState('login') // 'login' or 'register'
+  
+  // Login input states
+  const [loginUsername, setLoginUsername] = useState('')
+  const [loginPassword, setLoginPassword] = useState('')
+
+  // Register input states
+  const [registerName, setRegisterName] = useState('')
+  const [registerUsername, setRegisterUsername] = useState('')
+  const [registerPassword, setRegisterPassword] = useState('')
+  const [registerRole, setRegisterRole] = useState('Employee')
+  const [registerDeptId, setRegisterDeptId] = useState('dept-admin')
 
   // State loaded from Dexie DB
   const [carbonLogs, setCarbonLogs] = useState([])
   const [csrLogs, setCsrLogs] = useState([])
   const [complianceIssues, setComplianceIssues] = useState([])
+  const [departments, setDepartments] = useState([])
+  const [emissionFactorsList, setEmissionFactorsList] = useState([])
+  const [challenges, setChallenges] = useState([])
+  const [allUsers, setAllUsers] = useState([])
 
-  // User Gamification XP and Badges (stateful, with default starter values and localStorage persistence)
-  const [userXP, setUserXP] = useState(() => {
-    const saved = localStorage.getItem('ecosphere-xp')
-    return saved ? parseInt(saved, 10) : 1200
-  })
+  // User stats (computed or synced for logged-in user)
+  const userXP = currentUser ? currentUser.totalXP : 0
+  const userBadges = currentUser ? currentUser.badges || [] : []
 
-  const [userBadges, setUserBadges] = useState(() => {
-    const saved = localStorage.getItem('ecosphere-badges')
-    return saved ? JSON.parse(saved) : ['Sustainably Starter', 'CSR Champion']
-  })
-
-  useEffect(() => {
-    localStorage.setItem('ecosphere-xp', userXP.toString())
-  }, [userXP])
-
-  useEffect(() => {
-    localStorage.setItem('ecosphere-badges', JSON.stringify(userBadges))
-  }, [userBadges])
-
-  // --- MOCK INTERACTIVE DIAL STATE FOR LANDING PREVIEW ---
-  const [previewValue, setPreviewValue] = useState(78)
-
-  // Form states
-  const [carbonFuelSource, setCarbonFuelSource] = useState('Fleet Fuel')
-  const [carbonAmount, setCarbonAmount] = useState('')
-  const [csrChallenge, setCsrChallenge] = useState('Cycle to Work')
-  const [csrFile, setCsrFile] = useState(null)
-  const [csrFileName, setCsrFileName] = useState('')
+  const handleLogout = () => {
+    localStorage.removeItem('ecosphere-user-id')
+    setCurrentUser(null)
+    setActiveTab('employee')
+  }
 
   // Load theme from localStorage
   useEffect(() => {
@@ -257,21 +258,78 @@ function App() {
       const cLogs = await db.carbon_transactions.toArray()
       const sLogs = await db.csr_participations.toArray()
       const compIssues = await db.compliance_issues.toArray()
+      const depts = await db.departments.toArray()
+      const efs = await db.emission_factors.toArray()
+      const chs = await db.challenges.toArray()
+      const usrs = await db.users.toArray()
 
-      // Sort by date or id to look nice
       setCarbonLogs(cLogs.reverse())
       setCsrLogs(sLogs.reverse())
       setComplianceIssues(compIssues)
+      setDepartments(depts)
+      setEmissionFactorsList(efs)
+      setChallenges(chs)
+      setAllUsers(usrs)
     } catch (e) {
       console.error("Dexie failed to load or seed data:", e)
     }
   }
 
+  // Auto-login from session
+  useEffect(() => {
+    const checkSession = async () => {
+      const savedId = localStorage.getItem('ecosphere-user-id')
+      if (savedId && allUsers.length > 0) {
+        const found = allUsers.find(u => u.id === savedId)
+        if (found) {
+          setCurrentUser(found)
+        }
+      }
+    }
+    checkSession()
+  }, [allUsers])
 
+  // Adjust active tab based on logged-in user role
+  useEffect(() => {
+    if (!currentUser) return
+    if (currentUser.role === 'System Admin') {
+      if (activeTab !== 'admin' && activeTab !== 'deptHead') {
+        setActiveTab('admin')
+      }
+    } else if (currentUser.role === 'Department Head') {
+      setActiveTab('deptHead')
+    } else {
+      setActiveTab('unauthorized')
+    }
+  }, [currentUser, activeTab])
+
+  // --- MOCK INTERACTIVE DIAL STATE FOR LANDING PREVIEW ---
+  const [previewValue, setPreviewValue] = useState(78)
+
+  // Form states
+  const [carbonFuelSource, setCarbonFuelSource] = useState('Fleet Fuel')
+  const [carbonAmount, setCarbonAmount] = useState('')
+  const [csrChallenge, setCsrChallenge] = useState('Cycle to Work')
+  const [csrFile, setCsrFile] = useState(null)
+  const [csrFileName, setCsrFileName] = useState('')
+
+  // Admin form states
+  const [newDeptName, setNewDeptName] = useState('')
+  const [newDeptHead, setNewDeptHead] = useState('u-003')
+  const [newDeptEmpCount, setNewDeptEmpCount] = useState('')
+
+  const [newEfSource, setNewEfSource] = useState('')
+  const [newEfMultiplier, setNewEfMultiplier] = useState('')
+
+  const [newChallengeTitle, setNewChallengeTitle] = useState('')
+  const [newChallengeXP, setNewChallengeXP] = useState('')
+
+  // Dept Head form states
+  const [newComplianceDesc, setNewComplianceDesc] = useState('')
+  const [newComplianceOwner, setNewComplianceOwner] = useState('u-003')
+  const [newComplianceDueDate, setNewComplianceDueDate] = useState('')
 
   // --- AUTOMATED SYNC ENGINE PIPELINE ---
-  // overrideXP / overrideBadges: pass the freshly-computed values from an
-  // action handler so we never read stale React closure state.
   const handleSync = async (overrideXP, overrideBadges) => {
     if (!online) {
       setSyncMessage('⚠️ Switch machine connection to ONLINE to synchronize.')
@@ -280,25 +338,34 @@ function App() {
     setSyncing(true)
     setSyncMessage('📡 Scanning IndexedDB and connecting to server...')
 
-    // Use the override values if provided, otherwise fall back to current state
     const currentXP     = overrideXP     !== undefined ? overrideXP     : userXP
     const currentBadges = overrideBadges !== undefined ? overrideBadges : userBadges
 
     const syncUrl = `http://${window.location.hostname}:5000/sync`
 
     try {
-      // 1. PUSH PHASE: Get all pending transactions
+      // 1. PUSH PHASE: Get all pending transactions & master updates
       const pendingCarbon = await db.carbon_transactions.where('sync_status').equals('pending').toArray()
       const pendingCsr    = await db.csr_participations.where('sync_status').equals('pending').toArray()
       const pendingComp   = await db.compliance_issues.where('sync_status').equals('pending').toArray()
+      const pendingDepts  = await db.departments.where('sync_status').equals('pending').toArray()
+      const pendingEfs    = await db.emission_factors.where('sync_status').equals('pending').toArray()
+      const pendingChs    = await db.challenges.where('sync_status').equals('pending').toArray()
+      const pendingUsers  = await db.users.where('sync_status').equals('pending').toArray()
 
-      const totalPending = pendingCarbon.length + pendingCsr.length + pendingComp.length
+      const totalPending = pendingCarbon.length + pendingCsr.length + pendingComp.length + pendingDepts.length + pendingEfs.length + pendingChs.length + pendingUsers.length
 
-      // Always push user XP and badges (using the fresh values)
-      const userPayload = {
-        id: 'u-001',
-        totalXP: currentXP,
-        badges: currentBadges
+      // Update current user credentials payload
+      const userPayloads = [...pendingUsers]
+      if (currentUser) {
+        const existInPending = pendingUsers.find(u => u.id === currentUser.id)
+        if (!existInPending) {
+          userPayloads.push({
+            ...currentUser,
+            totalXP: currentXP,
+            badges: currentBadges
+          })
+        }
       }
 
       setSyncMessage(`Pushing state to central cloud...`)
@@ -306,7 +373,10 @@ function App() {
         carbon_transactions: pendingCarbon,
         csr_participations: pendingCsr,
         compliance_issues: pendingComp,
-        user: userPayload
+        departments: pendingDepts,
+        emission_factors: pendingEfs,
+        challenges: pendingChs,
+        users: userPayloads
       }
 
       let serverResponded = false
@@ -319,7 +389,7 @@ function App() {
         if (response.ok) {
           serverResponded = true
           // Mark pushed items as synced in Dexie
-          await db.transaction('rw', db.carbon_transactions, db.csr_participations, db.compliance_issues, async () => {
+          await db.transaction('rw', db.carbon_transactions, db.csr_participations, db.compliance_issues, db.departments, db.emission_factors, db.challenges, db.users, async () => {
             for (let item of pendingCarbon) {
               await db.carbon_transactions.update(item.id, { sync_status: 'synced' })
             }
@@ -328,6 +398,18 @@ function App() {
             }
             for (let item of pendingComp) {
               await db.compliance_issues.update(item.id, { sync_status: 'synced' })
+            }
+            for (let item of pendingDepts) {
+              await db.departments.update(item.id, { sync_status: 'synced' })
+            }
+            for (let item of pendingEfs) {
+              await db.emission_factors.update(item.id, { sync_status: 'synced' })
+            }
+            for (let item of pendingChs) {
+              await db.challenges.update(item.id, { sync_status: 'synced' })
+            }
+            for (let item of pendingUsers) {
+              await db.users.update(item.id, { sync_status: 'synced' })
             }
           })
         }
@@ -349,9 +431,9 @@ function App() {
 
       // 3. MERGE PHASE: Save downloaded records to IndexedDB using upserts
       if (fetchedData) {
-        const { carbon_transactions, csr_participations, compliance_issues, user } = fetchedData
+        const { carbon_transactions, csr_participations, compliance_issues, departments: servDepts, emission_factors: servEfs, challenges: servChs, users: servUsers } = fetchedData
 
-        await db.transaction('rw', db.carbon_transactions, db.csr_participations, db.compliance_issues, async () => {
+        await db.transaction('rw', db.carbon_transactions, db.csr_participations, db.compliance_issues, db.departments, db.emission_factors, db.challenges, db.users, async () => {
           if (carbon_transactions && carbon_transactions.length > 0) {
             const mapped = carbon_transactions.map(t => ({ ...t, sync_status: 'synced' }))
             await db.carbon_transactions.bulkPut(mapped)
@@ -364,13 +446,33 @@ function App() {
             const mapped = compliance_issues.map(i => ({ ...i, sync_status: 'synced' }))
             await db.compliance_issues.bulkPut(mapped)
           }
+          if (servDepts && servDepts.length > 0) {
+            const mapped = servDepts.map(d => ({ ...d, sync_status: 'synced' }))
+            await db.departments.bulkPut(mapped)
+          }
+          if (servEfs && servEfs.length > 0) {
+            const mapped = servEfs.map(e => ({ ...e, sync_status: 'synced' }))
+            await db.emission_factors.bulkPut(mapped)
+          }
+          if (servChs && servChs.length > 0) {
+            const mapped = servChs.map(c => ({ ...c, sync_status: 'synced' }))
+            await db.challenges.bulkPut(mapped)
+          }
+          if (servUsers && servUsers.length > 0) {
+            const mapped = servUsers.map(u => ({ ...u, sync_status: 'synced' }))
+            await db.users.bulkPut(mapped)
+          }
         })
 
-        // Merge User XP and Badges: always keep the HIGHER of local vs server,
-        // using functional updaters so React batching never loses the fresh local value.
-        if (user) {
-          setUserXP(prev => Math.max(prev, user.totalXP))
-          setUserBadges(prev => Array.from(new Set([...prev, ...user.badges])))
+        if (servUsers && currentUser) {
+          const updatedCurrentUser = servUsers.find(u => u.id === currentUser.id)
+          if (updatedCurrentUser) {
+            setCurrentUser(prev => ({
+              ...prev,
+              totalXP: Math.max(prev.totalXP, updatedCurrentUser.totalXP),
+              badges: Array.from(new Set([...prev.badges, ...updatedCurrentUser.badges]))
+            }))
+          }
         }
       }
 
@@ -385,7 +487,7 @@ function App() {
       } else {
         // Fallback offline simulator behavior
         if (totalPending > 0) {
-          await db.transaction('rw', db.carbon_transactions, db.csr_participations, db.compliance_issues, async () => {
+          await db.transaction('rw', db.carbon_transactions, db.csr_participations, db.compliance_issues, db.departments, db.emission_factors, db.challenges, db.users, async () => {
             for (let item of pendingCarbon) {
               await db.carbon_transactions.update(item.id, { sync_status: 'synced' })
             }
@@ -394,6 +496,18 @@ function App() {
             }
             for (let item of pendingComp) {
               await db.compliance_issues.update(item.id, { sync_status: 'synced' })
+            }
+            for (let item of pendingDepts) {
+              await db.departments.update(item.id, { sync_status: 'synced' })
+            }
+            for (let item of pendingEfs) {
+              await db.emission_factors.update(item.id, { sync_status: 'synced' })
+            }
+            for (let item of pendingChs) {
+              await db.challenges.update(item.id, { sync_status: 'synced' })
+            }
+            for (let item of pendingUsers) {
+              await db.users.update(item.id, { sync_status: 'synced' })
             }
           })
           await loadDBData()
@@ -426,35 +540,44 @@ function App() {
   }, [])
 
   // --- DYNAMIC CALCULATOR LOGIC FOR AUTOMATED EMISSION ENGINE ---
-  const emissionFactors = {
-    'Fleet Fuel': 2.31,
-    'Electricity': 0.85,
-    'Natural Gas': 1.88
-  }
+  const emissionFactors = useMemo(() => {
+    const map = {}
+    emissionFactorsList.forEach(ef => {
+      map[ef.sourceType] = ef.multiplierValue
+    })
+    if (Object.keys(map).length === 0) {
+      map['Fleet Fuel'] = 2.31
+      map['Electricity'] = 0.85
+      map['Natural Gas'] = 1.88
+    }
+    return map
+  }, [emissionFactorsList])
+
+  useEffect(() => {
+    const keys = Object.keys(emissionFactors)
+    if (keys.length > 0 && !keys.includes(carbonFuelSource)) {
+      setCarbonFuelSource(keys[0])
+    }
+  }, [emissionFactors, carbonFuelSource])
 
   const calculatedEmissionsInput = useMemo(() => {
     const amt = parseFloat(carbonAmount)
-    if (isNaN(amt) || amt <= 0) return 0
+    if (isNaN(amt) || amt <= 0 || !emissionFactors[carbonFuelSource]) return 0
     return parseFloat((amt * emissionFactors[carbonFuelSource]).toFixed(2))
-  }, [carbonAmount, carbonFuelSource])
+  }, [carbonAmount, carbonFuelSource, emissionFactors])
 
   // --- REAL-TIME DYNAMIC ESG SCORE CALCULATIONS ---
-  // ESG scores are weighted: 40% Env, 30% Soc, 30% Gov
   const scores = useMemo(() => {
-    // 1. Env: starts at 90%, drops 1.5% for every 10kg emissions from transactions (representing footprint target offsets)
     const totalEmissions = carbonLogs.reduce((acc, curr) => acc + (curr.calculatedEmissions || 0), 0)
     const envBase = Math.max(10, 95 - (totalEmissions / 15))
 
-    // 2. Soc: base score 50% + 15% for every CSR activity completion, capped at 98%
     const completedCsrCount = csrLogs.length
     const socBase = Math.min(98, 50 + (completedCsrCount * 15))
 
-    // 3. Gov: percentage of compliance issues resolved. Let's seed 3 issues.
     const totalIssues = complianceIssues.length
     const resolvedIssues = complianceIssues.filter(i => i.status === 'Closed').length
     const govBase = totalIssues > 0 ? (resolvedIssues / totalIssues) * 100 : 80
 
-    // Weighted composite
     const overall = (envBase * 0.4) + (socBase * 0.3) + (govBase * 0.3)
 
     return {
@@ -465,14 +588,115 @@ function App() {
     }
   }, [carbonLogs, csrLogs, complianceIssues])
 
+  // Department specific scores (For Department Head Console)
+  const departmentScores = useMemo(() => {
+    if (!currentUser) return { env: 80, soc: 80, gov: 80, overall: 80 }
+    const deptId = currentUser.departmentId
+    
+    // Filter carbon transactions created by users of this department
+    const deptCarbonLogs = carbonLogs.filter(log => {
+      const logUserId = log.userId || 'u-001'
+      const u = allUsers.find(user => user.id === logUserId)
+      return u && u.departmentId === deptId
+    })
+    const deptTotalEmissions = deptCarbonLogs.reduce((acc, curr) => acc + (curr.calculatedEmissions || 0), 0)
+    const envScore = Math.max(10, 95 - (deptTotalEmissions / 15))
+
+    // Filter CSR logs for users in this department
+    const deptCsrLogs = csrLogs.filter(log => {
+      const u = allUsers.find(user => user.id === log.userId)
+      return u && u.departmentId === deptId
+    })
+    const completedCsrCount = deptCsrLogs.length
+    const socScore = Math.min(98, 50 + (completedCsrCount * 15))
+
+    // Filter compliance issues for users in this department
+    const deptComplianceIssues = complianceIssues.filter(issue => {
+      const u = allUsers.find(user => user.id === issue.ownerId)
+      return u && u.departmentId === deptId
+    })
+    const deptTotalIssues = deptComplianceIssues.length
+    const deptResolvedIssues = deptComplianceIssues.filter(i => i.status === 'Closed').length
+    const govScore = deptTotalIssues > 0 ? (deptResolvedIssues / deptTotalIssues) * 100 : 80
+
+    const overallScore = (envScore * 0.4) + (socScore * 0.3) + (govScore * 0.3)
+
+    return {
+      env: envScore,
+      soc: socScore,
+      gov: govScore,
+      overall: overallScore
+    }
+  }, [carbonLogs, csrLogs, complianceIssues, currentUser, allUsers])
+
+  // --- AUTHENTICATION FLOW HANDLERS ---
+  const handleLoginSubmit = async (e) => {
+    e.preventDefault()
+    if (!loginUsername || !loginPassword) return
+
+    const matched = allUsers.filter(u => u.username.toLowerCase() === loginUsername.toLowerCase())
+    if (matched.length === 0) {
+      alert('⚠️ Username not found.')
+      return
+    }
+
+    const user = matched[0]
+    if (user.password !== loginPassword) {
+      alert('❌ Incorrect password.')
+      return
+    }
+
+    localStorage.setItem('ecosphere-user-id', user.id)
+    setCurrentUser(user)
+    setLoginUsername('')
+    setLoginPassword('')
+  }
+
+  const handleRegisterSubmit = async (e) => {
+    e.preventDefault()
+    if (!registerName || !registerUsername || !registerPassword) return
+
+    const matched = allUsers.filter(u => u.username.toLowerCase() === registerUsername.toLowerCase())
+    if (matched.length > 0) {
+      alert('⚠️ Username is already taken.')
+      return
+    }
+
+    const newUsr = {
+      id: 'u-' + Math.random().toString(36).substr(2, 4),
+      name: registerName,
+      username: registerUsername,
+      password: registerPassword,
+      role: registerRole,
+      departmentId: registerDeptId,
+      totalXP: 0,
+      badges: [],
+      sync_status: 'pending'
+    }
+
+    try {
+      await db.users.add(newUsr)
+      setRegisterName('')
+      setRegisterUsername('')
+      setRegisterPassword('')
+      await loadDBData()
+      alert('🎉 Registration successful! You can now sign in using your credentials.')
+      setAuthView('login')
+      handleSync()
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
   // --- USER TRIGGERS / FORM SUBMISSIONS ---
   const handleAddCarbonLog = async (e) => {
     e.preventDefault()
     const amt = parseFloat(carbonAmount)
-    if (isNaN(amt) || amt <= 0) return
+    if (isNaN(amt) || amt <= 0 || !currentUser) return
 
     const newLog = {
       id: generateUUID(),
+      userId: currentUser.id,
       sourceType: carbonFuelSource,
       rawAmount: amt,
       calculatedEmissions: calculatedEmissionsInput,
@@ -486,11 +710,12 @@ function App() {
       setCarbonAmount('')
       await loadDBData()
       
-      // Auto XP award
       const newXP = userXP + 25
-      setUserXP(newXP)
       
-      // Trigger background sync to server
+      // Update XP in local IndexedDB for this user
+      await db.users.update(currentUser.id, { totalXP: newXP })
+      setCurrentUser(prev => ({ ...prev, totalXP: newXP }))
+
       handleSync(newXP)
     } catch (err) {
       console.error(err)
@@ -507,13 +732,16 @@ function App() {
 
   const handleAddCsrLog = async (e) => {
     e.preventDefault()
-    // Enforce proof upload before submission
-    if (!csrFile) return
+    if (!csrFile || !currentUser) return
+
+    const selectedCh = challenges.find(ch => ch.title === csrChallenge)
+    const activityId = selectedCh ? selectedCh.id : 'ch-001'
+    const xpReward = selectedCh ? selectedCh.xpValue : 100
 
     const newCsr = {
       id: generateUUID(),
-      userId: 'u-001',
-      activityId: csrChallenge === 'Cycle to Work' ? 'ch-001' : csrChallenge === 'Avoid Single-Use Plastics' ? 'ch-002' : 'ch-003',
+      userId: currentUser.id,
+      activityId: activityId,
       proofFile: 'uploaded-base64-file-string',
       status: 'Submitted',
       sync_status: 'pending',
@@ -526,23 +754,16 @@ function App() {
       setCsrFileName('')
       await loadDBData()
 
-      // Gamification Reward: Award XP depending on challenge
-      let xpReward = 100
-      if (csrChallenge === 'Cycle to Work') xpReward = 150
-      if (csrChallenge === 'Avoid Single-Use Plastics') xpReward = 100
-      if (csrChallenge === 'Share Fleet Log') xpReward = 50
-
       const newXP = userXP + xpReward
-      setUserXP(newXP)
       
-      // Unlock new badge if user exceeds threshold
       let updatedBadges = [...userBadges]
       if (newXP >= 1400 && !userBadges.includes('Eco Titan')) {
         updatedBadges = [...userBadges, 'Eco Titan']
-        setUserBadges(updatedBadges)
       }
 
-      // Trigger background sync to server
+      await db.users.update(currentUser.id, { totalXP: newXP, badges: updatedBadges })
+      setCurrentUser(prev => ({ ...prev, totalXP: newXP, badges: updatedBadges }))
+
       handleSync(newXP, updatedBadges)
     } catch (err) {
       console.error(err)
@@ -558,30 +779,149 @@ function App() {
       })
       await loadDBData()
       
-      // Governance change reward
-      let newXP = userXP
-      if (nextStatus === 'Closed') {
-        newXP = userXP + 50
-      } else {
-        newXP = Math.max(0, userXP - 50)
+      if (currentUser) {
+        let newXP = userXP
+        if (nextStatus === 'Closed') {
+          newXP = userXP + 50
+        } else {
+          newXP = Math.max(0, userXP - 50)
+        }
+        await db.users.update(currentUser.id, { totalXP: newXP })
+        setCurrentUser(prev => ({ ...prev, totalXP: newXP }))
+        handleSync(newXP)
       }
-      setUserXP(newXP)
-
-      // Trigger background sync to server
-      handleSync(newXP)
     } catch (err) {
       console.error(err)
     }
   }
 
-  // --- REWARD REDEMPTION SUBMISSION ---
-  const handleRedeem = (cost, itemName) => {
-    if (userXP < cost) {
+  const handleRedeem = async (cost, itemName) => {
+    if (userXP < cost || !currentUser) {
       alert(`⚠️ Insufficient XP. You need ${cost} XP to redeem this reward.`)
       return
     }
-    setUserXP(prev => prev - cost)
+    const newXP = userXP - cost
+    await db.users.update(currentUser.id, { totalXP: newXP })
+    setCurrentUser(prev => ({ ...prev, totalXP: newXP }))
     alert(`🎉 Successfully redeemed: ${itemName}! Deducted ${cost} XP from your balance.`)
+    handleSync(newXP)
+  }
+
+  // --- SYSTEM ADMIN HANDLERS ---
+  const handleAddDept = async (e) => {
+    e.preventDefault()
+    if (!newDeptName) return
+    const newDept = {
+      id: 'dept-' + Math.random().toString(36).substr(2, 4),
+      name: newDeptName,
+      headId: newDeptHead,
+      employeeCount: parseInt(newDeptEmpCount, 10) || 5,
+      esgScores: { env: 80, soc: 80, gov: 80 },
+      sync_status: 'pending'
+    }
+    try {
+      await db.departments.add(newDept)
+      setNewDeptName('')
+      setNewDeptEmpCount('')
+      await loadDBData()
+      handleSync()
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  const handleDeleteDept = async (id) => {
+    try {
+      await db.departments.delete(id)
+      await loadDBData()
+      handleSync()
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  const handleAddEf = async (e) => {
+    e.preventDefault()
+    if (!newEfSource || !newEfMultiplier) return
+    const newEf = {
+      id: 'ef-' + Math.random().toString(36).substr(2, 4),
+      sourceType: newEfSource,
+      multiplierValue: parseFloat(newEfMultiplier),
+      sync_status: 'pending'
+    }
+    try {
+      await db.emission_factors.add(newEf)
+      setNewEfSource('')
+      setNewEfMultiplier('')
+      await loadDBData()
+      handleSync()
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  const handleDeleteEf = async (id) => {
+    try {
+      await db.emission_factors.delete(id)
+      await loadDBData()
+      handleSync()
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  const handleAddChallenge = async (e) => {
+    e.preventDefault()
+    if (!newChallengeTitle || !newChallengeXP) return
+    const newCh = {
+      id: 'ch-' + Math.random().toString(36).substr(2, 4),
+      title: newChallengeTitle,
+      xpValue: parseInt(newChallengeXP, 10),
+      status: 'Active',
+      sync_status: 'pending'
+    }
+    try {
+      await db.challenges.add(newCh)
+      setNewChallengeTitle('')
+      setNewChallengeXP('')
+      await loadDBData()
+      handleSync()
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  const handleDeleteChallenge = async (id) => {
+    try {
+      await db.challenges.delete(id)
+      await loadDBData()
+      handleSync()
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  // --- DEPARTMENT HEAD HANDLERS ---
+  const handleAddCompliance = async (e) => {
+    e.preventDefault()
+    if (!newComplianceDesc || !newComplianceOwner || !newComplianceDueDate) return
+    const newIssue = {
+      id: generateUUID(),
+      description: newComplianceDesc,
+      ownerId: newComplianceOwner,
+      dueDate: newComplianceDueDate,
+      status: 'Open',
+      sync_status: 'pending'
+    }
+    try {
+      await db.compliance_issues.add(newIssue)
+      setNewComplianceDesc('')
+      setNewComplianceDueDate('')
+      await loadDBData()
+      handleSync()
+    } catch (err) {
+      console.error(err)
+    }
   }
 
   return (
@@ -628,6 +968,18 @@ function App() {
             ) : (
               <button onClick={() => setPage('dashboard')} className="tactile-btn primary">
                 Launch Console
+              </button>
+            )}
+
+            {/* LOGGED IN USER LOGOUT SWITCH */}
+            {currentUser && (
+              <button 
+                onClick={handleLogout} 
+                className="tactile-btn danger" 
+                title="Sign Out of Sustainability Console"
+                style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+              >
+                Log Out
               </button>
             )}
           </div>
@@ -754,6 +1106,7 @@ function App() {
       ) : (
         /* DASHBOARD CONSOLE ROUTE */
         <div className="container">
+          
           {/* OFFLINE DATABASE SYNC ALERTS */}
           <div className="embossed-panel" style={{ marginBottom: '30px', padding: '16px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -771,7 +1124,7 @@ function App() {
             </div>
 
             <button 
-              onClick={handleSync} 
+              onClick={() => handleSync()} 
               disabled={syncing}
               className={`tactile-btn ${syncing ? 'active' : ''}`}
               style={{ padding: '8px 16px', fontSize: '0.85rem' }}
@@ -780,358 +1133,565 @@ function App() {
             </button>
           </div>
 
-          {/* MAIN CIRCULAR ESG SCORE GAUGES SECTION */}
-          <div className="gauges-row">
-            {/* OVERALL MASTER Score Dial (Composite) */}
-            <div className="embossed-panel master-gauge-card">
-              <CircularGauge value={scores.overall} label="Composite" color="var(--accent-green)" size={160} />
-              <div className="master-gauge-info">
-                <h3>Overall ESG Rating</h3>
-                <p>
-                  Calculated as a weighted matrix (40% Environment, 30% Social, 30% Governance) based on local transactions.
-                </p>
-                <div style={{ marginTop: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                  <span className="badge-item" style={{ fontSize: '0.7rem', padding: '4px 8px' }}>
-                    Weighting: 40/30/30
-                  </span>
-                  <span className="badge-item" style={{ fontSize: '0.7rem', padding: '4px 8px', color: 'var(--accent-green)' }}>
-                    Standard Compliant
-                  </span>
+          {/* GATEWAY AUTHENTICATION VIEW IF NOT SIGNED IN */}
+          {!currentUser ? (
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '40px 0' }}>
+              <div className="tactile-machine" style={{ maxWidth: '480px', width: '100%' }}>
+                <div className="machine-header">
+                  <span className="machine-title">Security Gateway</span>
+                  <div className="machine-status-light">
+                    <span className="machine-light" style={{ backgroundColor: 'var(--red)', boxShadow: '0 0 8px var(--red)' }}></span>
+                    LOCKED
+                  </div>
                 </div>
-              </div>
-            </div>
 
-            {/* Environmental Dial */}
-            <div className="embossed-panel gauge-card">
-              <CircularGauge value={scores.env} label="Environmental" color="var(--accent-green)" />
-              <span className="hardware-label" style={{ marginTop: '15px' }}>40% Score Weight</span>
-            </div>
-
-            {/* Social Dial */}
-            <div className="embossed-panel gauge-card">
-              <CircularGauge value={scores.soc} label="Social (CSR)" color="var(--accent-blue)" />
-              <span className="hardware-label" style={{ marginTop: '15px' }}>30% Score Weight</span>
-            </div>
-
-            {/* Governance Dial */}
-            <div className="embossed-panel gauge-card">
-              <CircularGauge value={scores.gov} label="Governance" color="var(--red)" />
-              <span className="hardware-label" style={{ marginTop: '15px' }}>30% Score Weight</span>
-            </div>
-          </div>
-
-          {/* ACTIVE AUDITS & ACTIONS SECTION */}
-          <div className="dashboard-grid" style={{ marginBottom: '40px' }}>
-            
-            {/* PANEL: LOG CARBON EMISSIONS (E-Pillar) */}
-            <div className="embossed-panel">
-              <h3 className="desk-section-title">
-                <IconFlame size={18} color="var(--accent-green)" />
-                Automated Carbon Engine
-              </h3>
-
-              <form onSubmit={handleAddCarbonLog}>
-                <div className="tactile-input-container">
-                  <label className="tactile-label" htmlFor="source-type">Fuel Source</label>
-                  <select 
-                    id="source-type"
-                    className="tactile-input tactile-select"
-                    value={carbonFuelSource}
-                    onChange={(e) => setCarbonFuelSource(e.target.value)}
+                {/* AUTH TAB CONTROL */}
+                <div className="debossed-panel" style={{ padding: '6px', borderRadius: '10px', display: 'flex', gap: '6px', marginBottom: '20px' }}>
+                  <button 
+                    onClick={() => setAuthView('login')} 
+                    className={`tactile-btn ${authView === 'login' ? 'active' : ''}`}
+                    style={{ flex: 1, padding: '8px 12px', borderRadius: '8px', fontSize: '0.8rem' }}
                   >
-                    <option value="Fleet Fuel">Fleet Fuel (CO₂ x2.31)</option>
-                    <option value="Electricity">Electricity (CO₂ x0.85)</option>
-                    <option value="Natural Gas">Natural Gas (CO₂ x1.88)</option>
-                  </select>
+                    Sign In
+                  </button>
+                  <button 
+                    onClick={() => setAuthView('register')} 
+                    className={`tactile-btn ${authView === 'register' ? 'active' : ''}`}
+                    style={{ flex: 1, padding: '8px 12px', borderRadius: '8px', fontSize: '0.8rem' }}
+                  >
+                    Register Account
+                  </button>
                 </div>
 
-                <div className="tactile-input-container">
-                  <label className="tactile-label" htmlFor="amount-input">Raw Quantity (Liters / kWh)</label>
-                  <input 
-                    id="amount-input"
-                    type="number" 
-                    className="tactile-input" 
-                    placeholder="Enter operation volume"
-                    value={carbonAmount}
-                    onChange={(e) => setCarbonAmount(e.target.value)}
-                    min="1"
-                    required
-                  />
-                </div>
-
-                <div className="debossed-panel" style={{ padding: '14px 20px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span className="hardware-label" style={{ fontSize: '0.75rem' }}>Calculated CO₂ Footprint</span>
-                  <span style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--red)' }}>
-                    {calculatedEmissionsInput} kg
-                  </span>
-                </div>
-
-                <button type="submit" className="tactile-btn primary" style={{ width: '100%' }}>
-                  Log Carbon Transaction (+25 XP)
-                </button>
-              </form>
-
-              {/* Transactions list */}
-              <div style={{ marginTop: '24px' }}>
-                <span className="hardware-label">Offline Audit Trail ({carbonLogs.length})</span>
-                <div className="log-list">
-                  {carbonLogs.map(log => (
-                    <div key={log.id} className="log-item">
-                      <div className="log-item-details">
-                        <span className="log-item-type">{log.sourceType} ({log.rawAmount} units)</span>
-                        <span className="log-item-date">{formatTimestamp(log.createdAt || log.date)}</span>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <span className="log-item-amount">+{log.calculatedEmissions} kg CO₂</span>
-                        <div className="log-item-sync">
-                          <span className={`sync-dot ${log.sync_status === 'synced' ? 'synced' : 'pending'}`}></span>
-                          {log.sync_status === 'synced' ? 'Synced' : 'Pending'}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* PANEL: USER PROFILE & CSR ACTIONS (S-Pillar) */}
-            <div className="embossed-panel" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '30px' }}>
-              
-              {/* User profile capsule */}
-              <div>
-                <div className="user-hub">
-                  <div className="user-avatar">
-                    {userXP > 0 ? 'JJ' : 'EM'}
-                  </div>
-                  <div className="user-meta">
-                    <h4>Jatin Joshi</h4>
-                    <p>Role: System Admin (Engineering)</p>
-                  </div>
-                </div>
-
-                {/* Neumorphic XP progress meter */}
-                <div style={{ marginBottom: '16px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', fontWeight: 700, marginBottom: '6px' }}>
-                    <span className="hardware-label">Accrued XP Level</span>
-                    <span>{userXP} XP</span>
-                  </div>
-                  <div className="debossed-panel" style={{ padding: '4px', borderRadius: '10px' }}>
-                    <div 
-                      style={{ 
-                        height: '10px', 
-                        borderRadius: '6px', 
-                        background: 'var(--accent-blue)', 
-                        width: `${Math.min(100, (userXP / 2000) * 100)}%`,
-                        transition: 'width 0.4s ease'
-                      }}
-                    ></div>
-                  </div>
-                </div>
-
-                {/* Badges checklist */}
-                <span className="hardware-label">Unlocked Milestones</span>
-                <div className="badge-list">
-                  {userBadges.map(badge => (
-                    <div key={badge} className="badge-item">
-                      <IconAward size={14} color="var(--accent-blue)" />
-                      {badge}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Form: submit CSR Activity */}
-              <div>
-                <h3 className="desk-section-title" style={{ marginTop: '10px' }}>
-                  <IconActivity size={18} color="var(--accent-blue)" />
-                  Gamified CSR Evidence
-                </h3>
-
-                <form onSubmit={handleAddCsrLog}>
-                  <div className="tactile-input-container">
-                    <label className="tactile-label" htmlFor="csr-challenge">Select CSR Campaign</label>
-                    <select 
-                      id="csr-challenge"
-                      className="tactile-input tactile-select"
-                      value={csrChallenge}
-                      onChange={(e) => setCsrChallenge(e.target.value)}
-                    >
-                      <option value="Cycle to Work">Cycle to Work (+150 XP)</option>
-                      <option value="Avoid Single-Use Plastics">Avoid Single-Use Plastics (+100 XP)</option>
-                      <option value="Share Fleet Log">Share Fleet Log (+50 XP)</option>
-                    </select>
-                  </div>
-
-                  <div className="tactile-input-container">
-                    <label className="tactile-label">Upload Evidence File (Required)</label>
-                    <div className={`tactile-file-drop ${csrFile ? 'has-file' : ''}`}>
-                      <IconCloud size={28} color={csrFile ? 'var(--accent-green)' : 'var(--text-muted)'} />
-                      <p style={{ fontSize: '0.8rem', fontWeight: 700 }}>
-                        {csrFileName ? `📎 ${csrFileName}` : 'Drag or click to choose proof image'}
-                      </p>
+                {authView === 'login' ? (
+                  <form onSubmit={handleLoginSubmit}>
+                    <div className="tactile-input-container">
+                      <label className="tactile-label" htmlFor="login-user">Username</label>
                       <input 
-                        type="file" 
-                        className="file-input-hidden" 
-                        accept="image/*,application/pdf"
-                        onChange={handleFileChange}
+                        id="login-user"
+                        type="text" 
+                        className="tactile-input" 
+                        value={loginUsername}
+                        onChange={(e) => setLoginUsername(e.target.value)}
+                        placeholder="Enter username"
                         required
                       />
                     </div>
-                  </div>
+                    <div className="tactile-input-container">
+                      <label className="tactile-label" htmlFor="login-pass">Password</label>
+                      <input 
+                        id="login-pass"
+                        type="password" 
+                        className="tactile-input" 
+                        value={loginPassword}
+                        onChange={(e) => setLoginPassword(e.target.value)}
+                        placeholder="Enter password"
+                        required
+                      />
+                    </div>
+                    <button type="submit" className="tactile-btn primary machine-footer-btn" style={{ marginTop: '10px' }}>
+                      Authenticate Console
+                    </button>
 
-                  <button 
-                    type="submit" 
-                    disabled={!csrFile}
-                    className={`tactile-btn secondary ${!csrFile ? 'disabled' : ''}`}
-                    style={{ width: '100%', opacity: csrFile ? 1 : 0.6 }}
-                  >
-                    Submit Proof & Claim XP
-                  </button>
-                </form>
+                    <div className="debossed-panel" style={{ marginTop: '20px', padding: '12px', borderRadius: '10px', fontSize: '0.75rem', lineHeight: '1.4', color: 'var(--text-muted)' }}>
+                      💡 <strong>Hint:</strong> Use seeded credentials to log in:
+                      <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
+                        <li>Admin: <code>jatin</code> / <code>password123</code></li>
+                        <li>Head: <code>sarah</code> / <code>password123</code></li>
+                        <li>Employee: <code>michael</code> / <code>password123</code></li>
+                      </ul>
+                    </div>
+                  </form>
+                ) : (
+                  <form onSubmit={handleRegisterSubmit}>
+                    <div className="tactile-input-container">
+                      <label className="tactile-label" htmlFor="reg-name">Full Name</label>
+                      <input 
+                        id="reg-name"
+                        type="text" 
+                        className="tactile-input" 
+                        value={registerName}
+                        onChange={(e) => setRegisterName(e.target.value)}
+                        placeholder="e.g. Jack Smith"
+                        required
+                      />
+                    </div>
+                    <div className="tactile-input-container">
+                      <label className="tactile-label" htmlFor="reg-user">Username</label>
+                      <input 
+                        id="reg-user"
+                        type="text" 
+                        className="tactile-input" 
+                        value={registerUsername}
+                        onChange={(e) => setRegisterUsername(e.target.value)}
+                        placeholder="Create username"
+                        required
+                      />
+                    </div>
+                    <div className="tactile-input-container">
+                      <label className="tactile-label" htmlFor="reg-pass">Password</label>
+                      <input 
+                        id="reg-pass"
+                        type="password" 
+                        className="tactile-input" 
+                        value={registerPassword}
+                        onChange={(e) => setRegisterPassword(e.target.value)}
+                        placeholder="Create password"
+                        required
+                      />
+                    </div>
+                    <div className="tactile-input-container">
+                      <label className="tactile-label" htmlFor="reg-role">Role Assign</label>
+                      <select 
+                        id="reg-role"
+                        className="tactile-input tactile-select"
+                        value={registerRole}
+                        onChange={(e) => setRegisterRole(e.target.value)}
+                      >
+                        <option value="Employee">Employee (Workspace log)</option>
+                        <option value="Department Head">Department Head (Auditor)</option>
+                        <option value="System Admin">System Admin (Full Config)</option>
+                      </select>
+                    </div>
+                    <div className="tactile-input-container">
+                      <label className="tactile-label" htmlFor="reg-dept">Department Assign</label>
+                      <select 
+                        id="reg-dept"
+                        className="tactile-input tactile-select"
+                        value={registerDeptId}
+                        onChange={(e) => setRegisterDeptId(e.target.value)}
+                      >
+                        {departments.map(d => (
+                          <option key={d.id} value={d.id}>{d.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <button type="submit" className="tactile-btn secondary machine-footer-btn" style={{ marginTop: '10px' }}>
+                      Register New Operator
+                    </button>
+                  </form>
+                )}
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* SKEUOMORPHIC ROLE TABS */}
+              {currentUser.role !== 'Employee' && (
+                <div className="debossed-panel" style={{ padding: '8px', borderRadius: '14px', marginBottom: '30px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  {(currentUser.role === 'Department Head' || currentUser.role === 'System Admin') && (
+                    <button 
+                      onClick={() => setActiveTab('deptHead')} 
+                      className={`tactile-btn ${activeTab === 'deptHead' ? 'active' : ''}`}
+                      style={{ flex: 1, padding: '10px 16px', borderRadius: '10px', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
+                    >
+                      👔 Dept Head Console ({currentUser.departmentId === 'dept-log' ? 'Logistics' : currentUser.departmentId === 'dept-eng' ? 'Engineering' : 'Admin'})
+                    </button>
+                  )}
 
-                {/* CSR list */}
-                <div style={{ marginTop: '24px' }}>
-                  <span className="hardware-label">CSR Activity Trail ({csrLogs.length})</span>
-                  <div className="log-list" style={{ maxHeight: '150px', overflowY: 'auto' }}>
-                    {csrLogs.map(log => {
-                      const campaignName = log.activityId === 'ch-001' ? 'Cycle to Work' : log.activityId === 'ch-002' ? 'Avoid Single-Use Plastics' : log.activityId === 'ch-003' ? 'Share Fleet Log' : 'CSR Campaign'
-                      return (
-                        <div key={log.id} className="log-item">
-                          <div className="log-item-details">
-                            <span className="log-item-type">{campaignName}</span>
-                            <span className="log-item-date">{formatTimestamp(log.createdAt)}</span>
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                            <span className="log-item-amount" style={{ color: 'var(--accent-blue)' }}>{log.status}</span>
-                            <div className="log-item-sync">
-                              <span className={`sync-dot ${log.sync_status === 'synced' ? 'synced' : 'pending'}`}></span>
-                              {log.sync_status === 'synced' ? 'Synced' : 'Pending'}
-                            </div>
-                          </div>
-                        </div>
-                      )
-                    })}
+                  {currentUser.role === 'System Admin' && (
+                    <button 
+                      onClick={() => setActiveTab('admin')} 
+                      className={`tactile-btn ${activeTab === 'admin' ? 'active' : ''}`}
+                      style={{ flex: 1, padding: '10px 16px', borderRadius: '10px', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
+                    >
+                      🔧 Admin Master Console
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* UNAUTHORIZED ACCESS VIEW FOR EMPLOYEES */}
+              {activeTab === 'unauthorized' && (
+                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '60px 0', width: '100%' }}>
+                  <div className="tactile-machine" style={{ maxWidth: '500px', width: '100%', padding: '30px' }}>
+                    <div className="machine-header" style={{ marginBottom: '20px' }}>
+                      <span className="machine-title">Access Restricted</span>
+                      <div className="machine-status-light">
+                        <span className="machine-light" style={{ backgroundColor: 'var(--red)', boxShadow: '0 0 8px var(--red)' }}></span>
+                        LOCKED
+                      </div>
+                    </div>
+                    <div className="debossed-panel" style={{ padding: '24px', borderRadius: '12px', marginBottom: '25px', textAlign: 'center' }}>
+                      <p style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--red)', marginBottom: '10px' }}>
+                        ⚠️ Operator Access Denied
+                      </p>
+                      <p style={{ fontSize: '0.85rem', lineHeight: '1.5', color: 'var(--text-muted)' }}>
+                        Your role (<strong>Employee</strong>) is not authorized to access the EcoSphere console. Console operation is restricted to System Administrators and Department Heads.
+                      </p>
+                    </div>
+                    <button onClick={handleLogout} className="tactile-btn danger machine-footer-btn">
+                      Disconnect Session
+                    </button>
                   </div>
                 </div>
-              </div>
+              )}
 
-            </div>
-          </div>
-
-          {/* GOVERNANCE TRACKER (G-Pillar) */}
-          <div className="embossed-panel" style={{ marginBottom: '40px' }}>
-            <h3 className="desk-section-title">
-              <IconShield size={18} color="var(--red)" />
-              Active Compliance Flags
-            </h3>
-            <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '20px' }}>
-              Current System Time: <span>2026-07-12</span>. Issues exceeding target due dates alert operators with emergency pulse flashes. Click rocker toggles to close resolved audits.
-            </p>
-
-            <div className="compliance-list">
-              {complianceIssues.map(issue => {
-                const isOverdue = new Date('2026-07-12') > new Date(issue.dueDate) && issue.status === 'Open'
-                return (
-                  <div key={issue.id} className="compliance-item">
-                    <div className="compliance-info">
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <span className={`compliance-badge ${issue.status === 'Open' ? (isOverdue ? 'overdue' : 'open') : 'closed'}`}>
-                          {issue.status === 'Open' ? (isOverdue ? '⚠️ Overdue' : 'Open') : 'Closed'}
-                        </span>
-                        <span className="compliance-desc">{issue.description}</span>
-                      </div>
-                      <div className="compliance-meta" style={{ marginTop: '6px' }}>
-                        <span>Owner: {issue.ownerId === 'u-001' ? 'Jatin Joshi' : issue.ownerId}</span>
-                        <span>Due Date: {issue.dueDate}</span>
-                        <span>Sync: {issue.sync_status}</span>
+              {/* TAB 2: DEPARTMENT HEAD CONSOLE */}
+              {activeTab === 'deptHead' && (currentUser.role === 'Department Head' || currentUser.role === 'System Admin') && (
+                <>
+                  {/* DEPT PERFORMANCE MONITOR GAUGES */}
+                  <div className="gauges-row">
+                    <div className="embossed-panel master-gauge-card">
+                      <CircularGauge value={departmentScores.overall} label="Dept Overall" color="var(--accent-blue)" size={160} />
+                      <div className="master-gauge-info">
+                        <h3>{currentUser.departmentId === 'dept-log' ? 'Logistics' : currentUser.departmentId === 'dept-eng' ? 'Engineering' : 'Administration'} Rating</h3>
+                        <p>
+                          Metrics aggregated for this division. System admin reviews overall corporate weighted performance.
+                        </p>
+                        <div style={{ marginTop: '12px' }}>
+                          <span className="badge-item" style={{ fontSize: '0.7rem', padding: '4px 8px', color: 'var(--accent-blue)' }}>
+                            Department Head: {currentUser.name}
+                          </span>
+                        </div>
                       </div>
                     </div>
 
-                    <button 
-                      onClick={() => handleToggleCompliance(issue.id, issue.status)}
-                      className={`tactile-btn ${issue.status === 'Closed' ? 'active' : ''}`}
-                      style={{ padding: '8px 16px', fontSize: '0.8rem' }}
-                    >
-                      {issue.status === 'Open' ? 'Toggle Close' : 'Reopen Audit'}
-                    </button>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
+                    <div className="embossed-panel gauge-card">
+                      <CircularGauge value={departmentScores.env} label="Department Env" color="var(--accent-green)" />
+                    </div>
 
-          {/* REWARD CATALOG (Desk perspective cards) */}
-          <div style={{ marginBottom: '40px' }}>
-            <div className="desk-section-title">
-              <IconAward size={18} color="var(--accent-green)" />
-              Reward Redemption Catalog
-            </div>
-            
-            <div className="desk-surface">
-              {/* Card 1 */}
-              <div className="desk-card">
-                <div className="desk-card-header">
-                  <div className="desk-card-icon green">
-                    <IconLeaf size={24} />
-                  </div>
-                  <span className="desk-card-cost">200 XP</span>
-                </div>
-                <div className="desk-card-body">
-                  <h4 className="desk-card-title">Plant 5 Forest Trees</h4>
-                  <p className="desk-card-desc">
-                    Fund corporate carbon absorption program. Trees are planted in localized ESG parks under your audit profile.
-                  </p>
-                </div>
-                <div className="desk-card-footer">
-                  <button onClick={() => handleRedeem(200, 'Plant 5 Forest Trees')} className="tactile-btn primary">
-                    Redeem Reward
-                  </button>
-                </div>
-              </div>
+                    <div className="embossed-panel gauge-card">
+                      <CircularGauge value={departmentScores.soc} label="Department Soc" color="var(--accent-blue)" />
+                    </div>
 
-              {/* Card 2 */}
-              <div className="desk-card" style={{ transform: 'rotateX(12deg) rotateY(4deg) rotateZ(1deg)' }}>
-                <div className="desk-card-header">
-                  <div className="desk-card-icon">
-                    <IconGlobe size={24} />
+                    <div className="embossed-panel gauge-card">
+                      <CircularGauge value={departmentScores.gov} label="Department Gov" color="var(--red)" />
+                    </div>
                   </div>
-                  <span className="desk-card-cost">500 XP</span>
-                </div>
-                <div className="desk-card-body">
-                  <h4 className="desk-card-title">Solar Device Charger</h4>
-                  <p className="desk-card-desc">
-                    Get an embossed solar-powered battery bank. Shipped directly to your division head office for auditing.
-                  </p>
-                </div>
-                <div className="desk-card-footer">
-                  <button onClick={() => handleRedeem(500, 'Solar Device Charger')} className="tactile-btn secondary">
-                    Redeem Reward
-                  </button>
-                </div>
-              </div>
 
-              {/* Card 3 */}
-              <div className="desk-card" style={{ transform: 'rotateX(15deg) rotateY(-12deg) rotateZ(-6deg)' }}>
-                <div className="desk-card-header">
-                  <div className="desk-card-icon green">
-                    <IconLeaf size={24} />
+                  {/* LOCAL COMPLIANCE ISSUES MANAGEMENT */}
+                  <div className="dashboard-grid" style={{ marginBottom: '40px' }}>
+                    <div className="embossed-panel">
+                      <h3 className="desk-section-title">
+                        <IconShield size={18} color="var(--red)" />
+                        Log Department Audit Flag
+                      </h3>
+
+                      <form onSubmit={handleAddCompliance}>
+                        <div className="tactile-input-container">
+                          <label className="tactile-label" htmlFor="comp-desc">Description</label>
+                          <input 
+                            id="comp-desc"
+                            type="text" 
+                            className="tactile-input" 
+                            placeholder="e.g. Hazardous waste storage inspection overdue"
+                            value={newComplianceDesc}
+                            onChange={(e) => setNewComplianceDesc(e.target.value)}
+                            required
+                          />
+                        </div>
+
+                        <div className="tactile-input-container">
+                          <label className="tactile-label" htmlFor="comp-owner">Target Owner</label>
+                          <select 
+                            id="comp-owner"
+                            className="tactile-input tactile-select"
+                            value={newComplianceOwner}
+                            onChange={(e) => setNewComplianceOwner(e.target.value)}
+                          >
+                            {allUsers.filter(u => u.departmentId === currentUser.departmentId).map(u => (
+                              <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="tactile-input-container">
+                          <label className="tactile-label" htmlFor="comp-due">Due Date</label>
+                          <input 
+                            id="comp-due"
+                            type="date" 
+                            className="tactile-input"
+                            value={newComplianceDueDate}
+                            onChange={(e) => setNewComplianceDueDate(e.target.value)}
+                            required
+                          />
+                        </div>
+
+                        <button type="submit" className="tactile-btn danger" style={{ width: '100%' }}>
+                          Create Compliance Violation Flag
+                        </button>
+                      </form>
+                    </div>
+
+                    <div className="embossed-panel">
+                      <h3 className="desk-section-title">
+                        <IconShield size={18} color="var(--red)" />
+                        Localized Compliance List
+                      </h3>
+                      
+                      <div className="compliance-list" style={{ maxHeight: '400px', overflowY: 'auto' }}>
+                        {complianceIssues.filter(issue => {
+                          const u = allUsers.find(user => user.id === issue.ownerId)
+                          return u && u.departmentId === currentUser.departmentId
+                        }).map(issue => {
+                          const isOverdue = new Date('2026-07-12') > new Date(issue.dueDate) && issue.status === 'Open'
+                          const ownerUser = allUsers.find(u => u.id === issue.ownerId)
+                          return (
+                            <div key={issue.id} className="compliance-item" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '10px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span className={`compliance-badge ${issue.status === 'Open' ? (isOverdue ? 'overdue' : 'open') : 'closed'}`}>
+                                  {issue.status === 'Open' ? (isOverdue ? '⚠️ Overdue' : 'Open') : 'Closed'}
+                                </span>
+                                <button 
+                                  onClick={() => handleToggleCompliance(issue.id, issue.status)}
+                                  className={`tactile-btn ${issue.status === 'Closed' ? 'active' : ''}`}
+                                  style={{ padding: '6px 12px', fontSize: '0.75rem' }}
+                                >
+                                  {issue.status === 'Open' ? 'Toggle Close' : 'Reopen Audit'}
+                                </button>
+                              </div>
+                              <div>
+                                <span className="compliance-desc" style={{ display: 'block', fontWeight: 800 }}>{issue.description}</span>
+                                <div className="compliance-meta" style={{ marginTop: '6px', justifyContent: 'space-between' }}>
+                                  <span>Owner: {ownerUser ? ownerUser.name : issue.ownerId}</span>
+                                  <span>Due Date: {issue.dueDate}</span>
+                                  <span>Sync: {issue.sync_status}</span>
+                                </div>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
                   </div>
-                  <span className="desk-card-cost">300 XP</span>
+                </>
+              )}
+
+              {/* TAB 3: SYSTEM ADMIN CONSOLE */}
+              {activeTab === 'admin' && currentUser.role === 'System Admin' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '40px', marginBottom: '40px' }}>
+                  
+                  {/* SECTION 1: DEPARTMENT HIERARCHIES */}
+                  <div className="embossed-panel">
+                    <h3 className="desk-section-title">
+                      <IconGlobe size={18} color="var(--accent-blue)" />
+                      Department Hierarchies Configuration
+                    </h3>
+
+                    <div className="dashboard-grid">
+                      <div>
+                        <form onSubmit={handleAddDept}>
+                          <div className="tactile-input-container">
+                            <label className="tactile-label" htmlFor="dept-name">Department Name</label>
+                            <input 
+                              id="dept-name"
+                              type="text" 
+                              className="tactile-input" 
+                              placeholder="e.g. Quality Assurance"
+                              value={newDeptName}
+                              onChange={(e) => setNewDeptName(e.target.value)}
+                              required
+                            />
+                          </div>
+
+                          <div className="tactile-input-container">
+                            <label className="tactile-label" htmlFor="dept-head">Department Head</label>
+                            <select 
+                              id="dept-head"
+                              className="tactile-input tactile-select"
+                              value={newDeptHead}
+                              onChange={(e) => setNewDeptHead(e.target.value)}
+                            >
+                              {allUsers.map(u => (
+                                <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="tactile-input-container">
+                            <label className="tactile-label" htmlFor="dept-emp">Employee Count</label>
+                            <input 
+                              id="dept-emp"
+                              type="number" 
+                              className="tactile-input" 
+                              placeholder="e.g. 12"
+                              value={newDeptEmpCount}
+                              onChange={(e) => setNewDeptEmpCount(e.target.value)}
+                              min="1"
+                              required
+                            />
+                          </div>
+
+                          <button type="submit" className="tactile-btn primary" style={{ width: '100%' }}>
+                            Add Master Department
+                          </button>
+                        </form>
+                      </div>
+
+                      <div>
+                        <span className="hardware-label">Configured Hierarchy Nodes ({departments.length})</span>
+                        <div className="log-list" style={{ maxHeight: '300px', overflowY: 'auto', marginTop: '10px' }}>
+                          {departments.map(d => {
+                            const mgr = allUsers.find(u => u.id === d.headId)
+                            return (
+                              <div key={d.id} className="log-item" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <span style={{ fontWeight: 800, fontSize: '0.95rem' }}>🏢 {d.name}</span>
+                                  <button 
+                                    onClick={() => handleDeleteDept(d.id)}
+                                    className="tactile-btn danger" 
+                                    style={{ padding: '4px 8px', fontSize: '0.7rem' }}
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                                  <span>Manager: {mgr ? mgr.name : d.headId}</span>
+                                  <span>Staff: {d.employeeCount}</span>
+                                  <span>Sync: {d.sync_status}</span>
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* SECTION 2: EMISSION FACTORS */}
+                  <div className="embossed-panel">
+                    <h3 className="desk-section-title">
+                      <IconFlame size={18} color="var(--accent-green)" />
+                      Emission Multipliers Configuration
+                    </h3>
+
+                    <div className="dashboard-grid">
+                      <div>
+                        <form onSubmit={handleAddEf}>
+                          <div className="tactile-input-container">
+                            <label className="tactile-label" htmlFor="ef-source">Fuel/Energy Source</label>
+                            <input 
+                              id="ef-source"
+                              type="text" 
+                              className="tactile-input" 
+                              placeholder="e.g. Bio-Fuel or Coal"
+                              value={newEfSource}
+                              onChange={(e) => setNewEfSource(e.target.value)}
+                              required
+                            />
+                          </div>
+
+                          <div className="tactile-input-container">
+                            <label className="tactile-label" htmlFor="ef-mult">CO₂ Multiplier (kg per unit)</label>
+                            <input 
+                              id="ef-mult"
+                              type="number" 
+                              className="tactile-input" 
+                              placeholder="e.g. 1.25"
+                              step="0.01"
+                              value={newEfMultiplier}
+                              onChange={(e) => setNewEfMultiplier(e.target.value)}
+                              min="0.01"
+                              required
+                            />
+                          </div>
+
+                          <button type="submit" className="tactile-btn primary" style={{ width: '100%' }}>
+                            Add Emission Multiplier
+                          </button>
+                        </form>
+                      </div>
+
+                      <div>
+                        <span className="hardware-label">Active Emission Factors ({emissionFactorsList.length})</span>
+                        <div className="log-list" style={{ maxHeight: '300px', overflowY: 'auto', marginTop: '10px' }}>
+                          {emissionFactorsList.map(ef => (
+                            <div key={ef.id} className="log-item" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+                              <div>
+                                <span style={{ fontWeight: 800 }}>⚡ {ef.sourceType}</span>
+                                <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)' }}>Sync: {ef.sync_status}</span>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <span style={{ fontWeight: 800, color: 'var(--red)' }}>x{ef.multiplierValue} CO₂</span>
+                                <button 
+                                  onClick={() => handleDeleteEf(ef.id)}
+                                  className="tactile-btn danger" 
+                                  style={{ padding: '4px 8px', fontSize: '0.7rem' }}
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* SECTION 3: GAMIFICATION CHALLENGES */}
+                  <div className="embossed-panel">
+                    <h3 className="desk-section-title">
+                      <IconAward size={18} color="var(--accent-green)" />
+                      Gamification Challenges Catalog
+                    </h3>
+
+                    <div className="dashboard-grid">
+                      <div>
+                        <form onSubmit={handleAddChallenge}>
+                          <div className="tactile-input-container">
+                            <label className="tactile-label" htmlFor="challenge-title">Challenge Title</label>
+                            <input 
+                              id="challenge-title"
+                              type="text" 
+                              className="tactile-input" 
+                              placeholder="e.g. Plant a Community Tree"
+                              value={newChallengeTitle}
+                              onChange={(e) => setNewChallengeTitle(e.target.value)}
+                              required
+                            />
+                          </div>
+
+                          <div className="tactile-input-container">
+                            <label className="tactile-label" htmlFor="challenge-xp">XP Reward Value</label>
+                            <input 
+                              id="challenge-xp"
+                              type="number" 
+                              className="tactile-input" 
+                              placeholder="e.g. 200"
+                              value={newChallengeXP}
+                              onChange={(e) => setNewChallengeXP(e.target.value)}
+                              min="10"
+                              required
+                            />
+                          </div>
+
+                          <button type="submit" className="tactile-btn primary" style={{ width: '100%' }}>
+                            Add Gamification Challenge
+                          </button>
+                        </form>
+                      </div>
+
+                      <div>
+                        <span className="hardware-label">Active Challenge Registry ({challenges.length})</span>
+                        <div className="log-list" style={{ maxHeight: '300px', overflowY: 'auto', marginTop: '10px' }}>
+                          {challenges.map(ch => (
+                            <div key={ch.id} className="log-item" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+                              <div>
+                                <span style={{ fontWeight: 800 }}>🏆 {ch.title}</span>
+                                <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)' }}>Status: {ch.status} • Sync: {ch.sync_status}</span>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <span style={{ fontWeight: 800, color: 'var(--accent-blue)' }}>+{ch.xpValue} XP</span>
+                                <button 
+                                  onClick={() => handleDeleteChallenge(ch.id)}
+                                  className="tactile-btn danger" 
+                                  style={{ padding: '4px 8px', fontSize: '0.7rem' }}
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
                 </div>
-                <div className="desk-card-body">
-                  <h4 className="desk-card-title">Stainless Eco Flask</h4>
-                  <p className="desk-card-desc">
-                    Claim a triple-insulated skeuomorphic temperature flask, customized with carbon-offset serial tracking.
-                  </p>
-                </div>
-                <div className="desk-card-footer">
-                  <button onClick={() => handleRedeem(300, 'Stainless Eco Flask')} className="tactile-btn primary">
-                    Redeem Reward
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
+              )}
+
+            </>
+          )}
 
         </div>
       )}

@@ -22,12 +22,18 @@ app.get('/sync', async (req, res) => {
     const carbon_transactions = await CarbonTransaction.find({})
     const csr_participations = await CsrParticipation.find({})
     const compliance_issues = await ComplianceIssue.find({})
-    const user = await User.findOne({ id: 'u-001' })
+    const departments = await Department.find({})
+    const emission_factors = await EmissionFactor.find({})
+    const challenges = await Challenge.find({})
+    const users = await User.find({})
     res.json({
       carbon_transactions,
       csr_participations,
       compliance_issues,
-      user
+      departments,
+      emission_factors,
+      challenges,
+      users
     })
   } catch (error) {
     res.status(500).json({ status: 'error', message: error.message })
@@ -35,7 +41,15 @@ app.get('/sync', async (req, res) => {
 })
 
 app.post('/sync', async (req, res) => {
-  const { carbon_transactions, csr_participations, compliance_issues, user } = req.body
+  const { 
+    carbon_transactions, 
+    csr_participations, 
+    compliance_issues, 
+    departments, 
+    emission_factors, 
+    challenges, 
+    users 
+  } = req.body
   try {
     if (carbon_transactions && carbon_transactions.length > 0) {
       for (const tx of carbon_transactions) {
@@ -64,16 +78,40 @@ app.post('/sync', async (req, res) => {
         )
       }
     }
-    if (user) {
-      const existingUser = await User.findOne({ id: user.id })
-      if (existingUser) {
-        const updatedXP = Math.max(existingUser.totalXP, user.totalXP)
-        const updatedBadges = Array.from(new Set([...existingUser.badges, ...user.badges]))
-        existingUser.totalXP = updatedXP
-        existingUser.badges = updatedBadges
-        await existingUser.save()
-      } else {
-        await User.findOneAndUpdate({ id: user.id }, { totalXP: user.totalXP, badges: user.badges }, { upsert: true })
+    if (departments && departments.length > 0) {
+      for (const dept of departments) {
+        await Department.findOneAndUpdate(
+          { id: dept.id },
+          { ...dept, sync_status: 'synced' },
+          { upsert: true }
+        )
+      }
+    }
+    if (emission_factors && emission_factors.length > 0) {
+      for (const ef of emission_factors) {
+        await EmissionFactor.findOneAndUpdate(
+          { id: ef.id },
+          { ...ef, sync_status: 'synced' },
+          { upsert: true }
+        )
+      }
+    }
+    if (challenges && challenges.length > 0) {
+      for (const ch of challenges) {
+        await Challenge.findOneAndUpdate(
+          { id: ch.id },
+          { ...ch, sync_status: 'synced' },
+          { upsert: true }
+        )
+      }
+    }
+    if (users && users.length > 0) {
+      for (const u of users) {
+        await User.findOneAndUpdate(
+          { id: u.id },
+          { ...u, sync_status: 'synced' },
+          { upsert: true }
+        )
       }
     }
     res.json({ status: 'synced', message: 'Data successfully saved to MongoDB' })
@@ -99,11 +137,11 @@ app.post('/dev/seed', async (_req, res) => {
     ]
     await Department.insertMany(seedDepts)
 
-    // 3. Seed users
+    // 3. Seed users with credentials
     const seedUsers = [
-      { id: 'u-001', name: 'Jatin', departmentId: 'dept-eng', role: 'System Admin', totalXP: 1200, badges: ['Sustainably Starter', 'CSR Champion'] },
-      { id: 'u-002', name: 'Sarah', departmentId: 'dept-log', role: 'Department Head', totalXP: 450, badges: ['Eco Driver'] },
-      { id: 'u-003', name: 'Michael', departmentId: 'dept-admin', role: 'Employee', totalXP: 100, badges: [] }
+      { id: 'u-001', name: 'Jatin', username: 'jatin', password: 'password123', departmentId: 'dept-eng', role: 'System Admin', totalXP: 1200, badges: ['Sustainably Starter', 'CSR Champion'] },
+      { id: 'u-002', name: 'Sarah', username: 'sarah', password: 'password123', departmentId: 'dept-log', role: 'Department Head', totalXP: 450, badges: ['Eco Driver'] },
+      { id: 'u-003', name: 'Michael', username: 'michael', password: 'password123', departmentId: 'dept-admin', role: 'Employee', totalXP: 100, badges: [] }
     ]
     await User.insertMany(seedUsers)
 
