@@ -293,13 +293,15 @@ function App() {
   useEffect(() => {
     if (!currentUser) return
     if (currentUser.role === 'System Admin') {
-      if (activeTab !== 'admin' && activeTab !== 'deptHead') {
+      if (activeTab !== 'admin' && activeTab !== 'deptHead' && activeTab !== 'employee') {
         setActiveTab('admin')
       }
     } else if (currentUser.role === 'Department Head') {
-      setActiveTab('deptHead')
+      if (activeTab !== 'deptHead' && activeTab !== 'employee') {
+        setActiveTab('deptHead')
+      }
     } else {
-      setActiveTab('unauthorized')
+      setActiveTab('employee')
     }
   }, [currentUser, activeTab])
 
@@ -1278,13 +1280,21 @@ function App() {
               {/* SKEUOMORPHIC ROLE TABS */}
               {currentUser.role !== 'Employee' && (
                 <div className="debossed-panel" style={{ padding: '8px', borderRadius: '14px', marginBottom: '30px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <button 
+                    onClick={() => setActiveTab('employee')} 
+                    className={`tactile-btn ${activeTab === 'employee' ? 'active' : ''}`}
+                    style={{ flex: 1, padding: '10px 16px', borderRadius: '10px', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
+                  >
+                    👷 Employee Console
+                  </button>
+
                   {(currentUser.role === 'Department Head' || currentUser.role === 'System Admin') && (
                     <button 
                       onClick={() => setActiveTab('deptHead')} 
                       className={`tactile-btn ${activeTab === 'deptHead' ? 'active' : ''}`}
                       style={{ flex: 1, padding: '10px 16px', borderRadius: '10px', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
                     >
-                      👔 Dept Head Console ({currentUser.departmentId === 'dept-log' ? 'Logistics' : currentUser.departmentId === 'dept-eng' ? 'Engineering' : 'Admin'})
+                      👔 Dept Head Console ({currentUser.departmentId === 'dept-log' ? 'Logistics' : currentUser.departmentId === 'dept-eng' ? 'Engineering' : 'Administration'})
                     </button>
                   )}
 
@@ -1300,29 +1310,346 @@ function App() {
                 </div>
               )}
 
-              {/* UNAUTHORIZED ACCESS VIEW FOR EMPLOYEES */}
-              {activeTab === 'unauthorized' && (
-                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '60px 0', width: '100%' }}>
-                  <div className="tactile-machine" style={{ maxWidth: '500px', width: '100%', padding: '30px' }}>
-                    <div className="machine-header" style={{ marginBottom: '20px' }}>
-                      <span className="machine-title">Access Restricted</span>
-                      <div className="machine-status-light">
-                        <span className="machine-light" style={{ backgroundColor: 'var(--red)', boxShadow: '0 0 8px var(--red)' }}></span>
-                        LOCKED
+              {/* TAB 1: EMPLOYEE CONSOLE */}
+              {activeTab === 'employee' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '30px' }}>
+                  
+                  {/* PROFILE & STATS SUMMARY */}
+                  <div className="embossed-panel" style={{ padding: '24px 30px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '20px' }}>
+                      <div className="user-hub">
+                        <div className="user-avatar">
+                          {currentUser.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div className="user-meta">
+                          <h4>{currentUser.name}</h4>
+                          <p>Role: <strong>{currentUser.role}</strong> • Department: <strong>{departments.find(d => d.id === currentUser.departmentId)?.name || currentUser.departmentId}</strong></p>
+                        </div>
+                      </div>
+                      
+                      <div className="embossed-panel" style={{ padding: '16px 24px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+                        <div style={{ textAlign: 'right' }}>
+                          <span className="hardware-label" style={{ fontSize: '0.65rem' }}>Earning Progress</span>
+                          <p style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--accent-green)' }}>{userXP} <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>XP</span></p>
+                        </div>
+                        <IconAward size={36} color="var(--accent-green)" />
                       </div>
                     </div>
-                    <div className="debossed-panel" style={{ padding: '24px', borderRadius: '12px', marginBottom: '25px', textAlign: 'center' }}>
-                      <p style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--red)', marginBottom: '10px' }}>
-                        ⚠️ Operator Access Denied
-                      </p>
-                      <p style={{ fontSize: '0.85rem', lineHeight: '1.5', color: 'var(--text-muted)' }}>
-                        Your role (<strong>Employee</strong>) is not authorized to access the EcoSphere console. Console operation is restricted to System Administrators and Department Heads.
-                      </p>
+
+                    <div style={{ marginTop: '20px', borderTop: '1px solid var(--border-color)', paddingTop: '20px' }}>
+                      <span className="hardware-label">Unlocked Badge Pins</span>
+                      <div className="badge-list">
+                        {userBadges.length > 0 ? (
+                          userBadges.map((badge, idx) => (
+                            <span key={idx} className="badge-item">
+                              🏅 {badge}
+                            </span>
+                          ))
+                        ) : (
+                          <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>No badges unlocked yet. Start completing challenges to earn badges!</span>
+                        )}
+                      </div>
                     </div>
-                    <button onClick={handleLogout} className="tactile-btn danger machine-footer-btn">
-                      Disconnect Session
-                    </button>
                   </div>
+
+                  {/* DOUBLE COLUMN OPERATION PANEL */}
+                  <div className="dashboard-grid">
+                    
+                    {/* PANEL A: OPERATIONAL CARBON LOGGING */}
+                    <div className="embossed-panel" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                      <div>
+                        <h3 className="desk-section-title">
+                          <IconFlame size={18} color="var(--accent-green)" />
+                          Log Environmental Fuel Log
+                        </h3>
+                        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '20px', lineHeight: '1.4' }}>
+                          Record fleet refueling or utility fuel bills. The engine will instantly calculate the corresponding carbon emissions using standard multipliers.
+                        </p>
+
+                        <form onSubmit={handleAddCarbonLog}>
+                          <div className="tactile-input-container">
+                            <label className="tactile-label" htmlFor="emp-carbon-source">Fuel / Emission Source</label>
+                            <select 
+                              id="emp-carbon-source"
+                              className="tactile-input tactile-select"
+                              value={carbonFuelSource}
+                              onChange={(e) => setCarbonFuelSource(e.target.value)}
+                            >
+                              {Object.keys(emissionFactors).map(src => (
+                                <option key={src} value={src}>{src} (x{emissionFactors[src]} CO₂)</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="tactile-input-container">
+                            <label className="tactile-label" htmlFor="emp-carbon-amount">Raw Amount / Quantity</label>
+                            <input 
+                              id="emp-carbon-amount"
+                              type="number" 
+                              className="tactile-input" 
+                              placeholder="e.g. 150"
+                              value={carbonAmount}
+                              onChange={(e) => setCarbonAmount(e.target.value)}
+                              min="1"
+                              step="any"
+                              required
+                            />
+                          </div>
+
+                          {/* DYNAMIC CARBON CALCULATION REAL-TIME READOUT */}
+                          <div className="debossed-panel" style={{ padding: '16px', borderRadius: '12px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div>
+                              <span className="hardware-label" style={{ fontSize: '0.65rem' }}>Calculated CO₂ Output</span>
+                              <p style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--red)', marginTop: '4px' }}>
+                                {calculatedEmissionsInput} <span style={{ fontSize: '0.85rem', fontWeight: 'normal' }}>kg CO₂e</span>
+                              </p>
+                            </div>
+                            <IconLeaf size={28} color="var(--red)" />
+                          </div>
+
+                          <button type="submit" className="tactile-btn primary" style={{ width: '100%' }}>
+                            Confirm & Log Fleet Transaction (+25 XP)
+                          </button>
+                        </form>
+                      </div>
+                    </div>
+
+                    {/* PANEL B: SOCIAL WORK EVIDENCE PORTAL */}
+                    <div className="embossed-panel" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                      <div>
+                        <h3 className="desk-section-title">
+                          <IconAward size={18} color="var(--accent-blue)" />
+                          CSR Gamification Portal
+                        </h3>
+                        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '20px', lineHeight: '1.4' }}>
+                          Participated in a corporate social responsibility event? Select the challenge, upload your evidence file, and claim your XP rewards.
+                        </p>
+
+                        <form onSubmit={handleAddCsrLog}>
+                          <div className="tactile-input-container">
+                            <label className="tactile-label" htmlFor="emp-csr-challenge">Sustainably Challenge</label>
+                            <select 
+                              id="emp-csr-challenge"
+                              className="tactile-input tactile-select"
+                              value={csrChallenge}
+                              onChange={(e) => setCsrChallenge(e.target.value)}
+                            >
+                              {challenges.filter(ch => ch.status === 'Active').map(ch => (
+                                <option key={ch.id} value={ch.title}>{ch.title} (+{ch.xpValue} XP)</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="tactile-input-container">
+                            <label className="tactile-label">Upload Proof of Participation</label>
+                            <div className={`tactile-file-drop ${csrFile ? 'has-file' : ''}`}>
+                              <IconCloud size={24} color={csrFile ? 'var(--accent-green)' : 'var(--text-muted)'} />
+                              <span style={{ fontSize: '0.85rem', fontWeight: 700 }}>
+                                {csrFile ? `Selected: ${csrFileName}` : 'Drag & drop or browse proof file'}
+                              </span>
+                              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Enforced file upload required for verification</span>
+                              <input 
+                                type="file" 
+                                className="file-input-hidden" 
+                                onChange={handleFileChange}
+                                accept="image/*,.pdf,.doc,.docx"
+                              />
+                            </div>
+                          </div>
+
+                          <button 
+                            type="submit" 
+                            className="tactile-btn secondary" 
+                            style={{ width: '100%', marginTop: '10px' }}
+                            disabled={!csrFile}
+                          >
+                            {!csrFile ? '🔒 Evidence Required to Submit' : 'Submit Verified CSR Participation'}
+                          </button>
+                        </form>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* GOVERNANCE & REDEMPTION DOUBLE PANEL */}
+                  <div className="dashboard-grid">
+                    
+                    {/* PANEL C: ACTIVE GOVERNANCE POLICIES & COMPLIANCE */}
+                    <div className="embossed-panel">
+                      <h3 className="desk-section-title">
+                        <IconShield size={18} color="var(--red)" />
+                        Assigned Policy & Audit Acknowledgment
+                      </h3>
+                      <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '20px', lineHeight: '1.4' }}>
+                        Governance violations, safety logs, or compliance documents that require your explicit acknowledgment or closure.
+                      </p>
+
+                      <div className="compliance-list" style={{ maxHeight: '400px', overflowY: 'auto' }}>
+                        {complianceIssues.filter(issue => issue.ownerId === currentUser.id).length > 0 ? (
+                          complianceIssues.filter(issue => issue.ownerId === currentUser.id).map(issue => {
+                            const isOverdue = new Date('2026-07-12') > new Date(issue.dueDate) && issue.status === 'Open'
+                            return (
+                              <div key={issue.id} className="compliance-item" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '10px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <span className={`compliance-badge ${issue.status === 'Open' ? (isOverdue ? 'overdue' : 'open') : 'closed'}`}>
+                                    {issue.status === 'Open' ? (isOverdue ? '⚠️ Overdue Audit' : 'Pending Action') : '✓ Acknowledged'}
+                                  </span>
+                                  <button 
+                                    onClick={() => handleToggleCompliance(issue.id, issue.status)}
+                                    className={`tactile-btn ${issue.status === 'Closed' ? 'active' : ''}`}
+                                    style={{ padding: '6px 12px', fontSize: '0.75rem' }}
+                                  >
+                                    {issue.status === 'Open' ? 'Acknowledge Policy (+50 XP)' : 'Reopen Audit'}
+                                  </button>
+                                </div>
+                                <div>
+                                  <span className="compliance-desc" style={{ display: 'block', fontWeight: 800 }}>{issue.description}</span>
+                                  <div className="compliance-meta" style={{ marginTop: '6px', justifyContent: 'space-between' }}>
+                                    <span>Due Date: {issue.dueDate}</span>
+                                    <span>Sync Status: {issue.sync_status}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            )
+                          })
+                        ) : (
+                          <div className="debossed-panel" style={{ padding: '20px', borderRadius: '12px', textAlign: 'center', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                            🎉 Outstanding! No assigned compliance issues or policies require action.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* PANEL D: GAMIFICATION REWARD REDEMPTION STORE */}
+                    <div className="embossed-panel">
+                      <h3 className="desk-section-title">
+                        <IconAward size={18} color="var(--accent-blue)" />
+                        Redeem Rewards Store
+                      </h3>
+                      <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '20px', lineHeight: '1.4' }}>
+                        Trade your earned sustainability XP points to claim tangible rewards, certificates, or carbon offset options.
+                      </p>
+
+                      <div className="desk-surface" style={{ gridTemplateColumns: '1fr', padding: '16px', gap: '16px', borderRadius: '16px', maxHeight: '420px', overflowY: 'auto' }}>
+                        
+                        {/* Reward Item 1 */}
+                        <div className="embossed-panel" style={{ padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+                          <div>
+                            <span style={{ fontWeight: 800, fontSize: '0.95rem', display: 'block' }}>🌳 Plant a Native Tree</span>
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>We will plant a certified native sapling on your behalf.</span>
+                          </div>
+                          <button 
+                            onClick={() => handleRedeem(300, 'Plant a Native Tree')}
+                            disabled={userXP < 300}
+                            className="tactile-btn primary"
+                            style={{ padding: '8px 14px', fontSize: '0.75rem', whiteSpace: 'nowrap' }}
+                          >
+                            {userXP >= 300 ? 'Redeem (300 XP)' : '300 XP Required'}
+                          </button>
+                        </div>
+
+                        {/* Reward Item 2 */}
+                        <div className="embossed-panel" style={{ padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+                          <div>
+                            <span style={{ fontWeight: 800, fontSize: '0.95rem', display: 'block' }}>⚡ Clean Energy Certificate</span>
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Offset 100 kWh of your home power grid footprint.</span>
+                          </div>
+                          <button 
+                            onClick={() => handleRedeem(500, 'Clean Energy Certificate')}
+                            disabled={userXP < 500}
+                            className="tactile-btn primary"
+                            style={{ padding: '8px 14px', fontSize: '0.75rem', whiteSpace: 'nowrap' }}
+                          >
+                            {userXP >= 500 ? 'Redeem (500 XP)' : '500 XP Required'}
+                          </button>
+                        </div>
+
+                        {/* Reward Item 3 */}
+                        <div className="embossed-panel" style={{ padding: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+                          <div>
+                            <span style={{ fontWeight: 800, fontSize: '0.95rem', display: 'block' }}>🍱 Organic Cafeteria Voucher</span>
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Free plant-based organic meal voucher at the cafeteria.</span>
+                          </div>
+                          <button 
+                            onClick={() => handleRedeem(200, 'Organic Cafeteria Voucher')}
+                            disabled={userXP < 200}
+                            className="tactile-btn primary"
+                            style={{ padding: '8px 14px', fontSize: '0.75rem', whiteSpace: 'nowrap' }}
+                          >
+                            {userXP >= 200 ? 'Redeem (200 XP)' : '200 XP Required'}
+                          </button>
+                        </div>
+
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* SECTION E: INDIVIDUAL RECENT LOGS SUMMARY */}
+                  <div className="embossed-panel">
+                    <h3 className="desk-section-title">
+                      <IconGlobe size={18} color="var(--accent-blue)" />
+                      Your Local Sustainability Activity Logs
+                    </h3>
+
+                    <div className="dashboard-grid">
+                      
+                      {/* Left: Carbon Logs */}
+                      <div>
+                        <span className="hardware-label">Your Environmental Logs ({carbonLogs.filter(log => log.userId === currentUser.id).length})</span>
+                        <div className="log-list" style={{ maxHeight: '300px', overflowY: 'auto', marginTop: '10px' }}>
+                          {carbonLogs.filter(log => log.userId === currentUser.id).length > 0 ? (
+                            carbonLogs.filter(log => log.userId === currentUser.id).map(log => (
+                              <div key={log.id} className="log-item" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+                                <div className="log-item-details">
+                                  <span className="log-item-type">⚡ {log.sourceType} ({log.rawAmount} units)</span>
+                                  <span className="log-item-date">Recorded: {log.date}</span>
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                                  <span style={{ fontWeight: 800, color: 'var(--red)' }}>+{log.calculatedEmissions} kg CO₂</span>
+                                  <div className="log-item-sync">
+                                    <span className={`sync-dot ${log.sync_status}`}></span>
+                                    <span style={{ fontSize: '0.7rem', textTransform: 'capitalize', color: 'var(--text-muted)' }}>{log.sync_status}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            ))
+                          ) : (
+                            <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontStyle: 'italic', marginTop: '10px' }}>No logged fuel items yet.</div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Right: CSR Logs */}
+                      <div>
+                        <span className="hardware-label">Your Social Participation Logs ({csrLogs.filter(log => log.userId === currentUser.id).length})</span>
+                        <div className="log-list" style={{ maxHeight: '300px', overflowY: 'auto', marginTop: '10px' }}>
+                          {csrLogs.filter(log => log.userId === currentUser.id).length > 0 ? (
+                            csrLogs.filter(log => log.userId === currentUser.id).map(log => {
+                              const ch = challenges.find(c => c.id === log.activityId)
+                              return (
+                                <div key={log.id} className="log-item" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <div className="log-item-details">
+                                    <span className="log-item-type">🏆 {ch ? ch.title : 'Sustainability Activity'}</span>
+                                    <span className="log-item-date">Status: <strong>{log.status}</strong></span>
+                                  </div>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                                    <span style={{ fontWeight: 800, color: 'var(--accent-blue)' }}>+{ch ? ch.xpValue : 100} XP</span>
+                                    <div className="log-item-sync">
+                                      <span className={`sync-dot ${log.sync_status}`}></span>
+                                      <span style={{ fontSize: '0.7rem', textTransform: 'capitalize', color: 'var(--text-muted)' }}>{log.sync_status}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              )
+                            })
+                          ) : (
+                            <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontStyle: 'italic', marginTop: '10px' }}>No logged CSR participations yet.</div>
+                          )}
+                        </div>
+                      </div>
+
+                    </div>
+                  </div>
+
                 </div>
               )}
 
