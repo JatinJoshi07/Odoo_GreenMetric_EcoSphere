@@ -9,7 +9,8 @@ export async function connectDB() {
     await mongoose.connect(uri, {
       serverSelectionTimeoutMS: 5000 // Timeout after 5 seconds instead of 30 seconds
     })
-    console.log('MongoDB connected successfully to', uri)
+    const maskedUri = uri.replace(/\/\/([^:]+):([^@]+)@/, '//****:****@')
+    console.log('MongoDB connected successfully to', maskedUri)
   } catch (error) {
     console.warn('⚠️ MongoDB connection failed:', error.message)
     console.warn('⚠️ Server is running, but database operations will fail until MongoDB is started.')

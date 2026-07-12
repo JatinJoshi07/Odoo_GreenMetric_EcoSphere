@@ -17,22 +17,63 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', message: 'EcoSphere API is running' })
 })
 
+app.get('/sync', async (req, res) => {
+  try {
+    const carbon_transactions = await CarbonTransaction.find({})
+    const csr_participations = await CsrParticipation.find({})
+    const compliance_issues = await ComplianceIssue.find({})
+    const user = await User.findOne({ id: 'u-001' })
+    res.json({
+      carbon_transactions,
+      csr_participations,
+      compliance_issues,
+      user
+    })
+  } catch (error) {
+    res.status(500).json({ status: 'error', message: error.message })
+  }
+})
+
 app.post('/sync', async (req, res) => {
-  const { carbon_transactions, csr_participations, compliance_issues } = req.body
+  const { carbon_transactions, csr_participations, compliance_issues, user } = req.body
   try {
     if (carbon_transactions && carbon_transactions.length > 0) {
       for (const tx of carbon_transactions) {
-        await CarbonTransaction.findOneAndUpdate({ id: tx.id }, tx, { upsert: true })
+        await CarbonTransaction.findOneAndUpdate(
+          { id: tx.id },
+          { ...tx, sync_status: 'synced' },
+          { upsert: true }
+        )
       }
     }
     if (csr_participations && csr_participations.length > 0) {
       for (const csr of csr_participations) {
-        await CsrParticipation.findOneAndUpdate({ id: csr.id }, csr, { upsert: true })
+        await CsrParticipation.findOneAndUpdate(
+          { id: csr.id },
+          { ...csr, sync_status: 'synced' },
+          { upsert: true }
+        )
       }
     }
     if (compliance_issues && compliance_issues.length > 0) {
       for (const issue of compliance_issues) {
-        await ComplianceIssue.findOneAndUpdate({ id: issue.id }, issue, { upsert: true })
+        await ComplianceIssue.findOneAndUpdate(
+          { id: issue.id },
+          { ...issue, sync_status: 'synced' },
+          { upsert: true }
+        )
+      }
+    }
+    if (user) {
+      const existingUser = await User.findOne({ id: user.id })
+      if (existingUser) {
+        const updatedXP = Math.max(existingUser.totalXP, user.totalXP)
+        const updatedBadges = Array.from(new Set([...existingUser.badges, ...user.badges]))
+        existingUser.totalXP = updatedXP
+        existingUser.badges = updatedBadges
+        await existingUser.save()
+      } else {
+        await User.findOneAndUpdate({ id: user.id }, { totalXP: user.totalXP, badges: user.badges }, { upsert: true })
       }
     }
     res.json({ status: 'synced', message: 'Data successfully saved to MongoDB' })

@@ -2,6 +2,33 @@ import React, { useState, useEffect, useMemo } from 'react'
 import { db, seedLocalSampleData } from './features/offlineStore'
 import './App.css'
 
+// Safe UUID generator supporting non-secure contexts (HTTP network IPs)
+const generateUUID = () => {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID()
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0
+    const v = c === 'x' ? r : (r & 0x3 | 0x8)
+    return v.toString(16)
+  })
+}
+
+const formatTimestamp = (dateVal) => {
+  if (!dateVal) return ''
+  try {
+    const d = new Date(dateVal)
+    if (isNaN(d.getTime())) return String(dateVal)
+    const pad = (num) => String(num).padStart(2, '0')
+    const dateStr = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`
+    const timeStr = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+    return `${dateStr} ${timeStr}`
+  } catch (e) {
+    return String(dateVal)
+  }
+}
+
+
 // --- CUSTOM SVG ICONS FOR TACTILE GRAPHICS ---
 function IconLeaf({ size = 20, color = 'currentColor' }) {
   return (
@@ -180,9 +207,24 @@ function App() {
   const [csrLogs, setCsrLogs] = useState([])
   const [complianceIssues, setComplianceIssues] = useState([])
 
-  // User Gamification XP and Badges (stateful, with default starter values)
-  const [userXP, setUserXP] = useState(1200)
-  const [userBadges, setUserBadges] = useState(['Sustainably Starter', 'CSR Champion'])
+  // User Gamification XP and Badges (stateful, with default starter values and localStorage persistence)
+  const [userXP, setUserXP] = useState(() => {
+    const saved = localStorage.getItem('ecosphere-xp')
+    return saved ? parseInt(saved, 10) : 1200
+  })
+
+  const [userBadges, setUserBadges] = useState(() => {
+    const saved = localStorage.getItem('ecosphere-badges')
+    return saved ? JSON.parse(saved) : ['Sustainably Starter', 'CSR Champion']
+  })
+
+  useEffect(() => {
+    localStorage.setItem('ecosphere-xp', userXP.toString())
+  }, [userXP])
+
+  useEffect(() => {
+    localStorage.setItem('ecosphere-badges', JSON.stringify(userBadges))
+  }, [userBadges])
 
   // --- MOCK INTERACTIVE DIAL STATE FOR LANDING PREVIEW ---
   const [previewValue, setPreviewValue] = useState(78)
@@ -225,12 +267,12 @@ function App() {
     }
   }
 
-  useEffect(() => {
-    loadDBData()
-  }, [])
+
 
   // --- AUTOMATED SYNC ENGINE PIPELINE ---
-  const handleSync = async () => {
+  // overrideXP / overrideBadges: pass the freshly-computed values from an
+  // action handler so we never read stale React closure state.
+  const handleSync = async (overrideXP, overrideBadges) => {
     if (!online) {
       setSyncMessage('⚠️ Switch machine connection to ONLINE to synchronize.')
       return
@@ -238,67 +280,126 @@ function App() {
     setSyncing(true)
     setSyncMessage('📡 Scanning IndexedDB and connecting to server...')
 
+    // Use the override values if provided, otherwise fall back to current state
+    const currentXP     = overrideXP     !== undefined ? overrideXP     : userXP
+    const currentBadges = overrideBadges !== undefined ? overrideBadges : userBadges
+
+    const syncUrl = `http://${window.location.hostname}:5000/sync`
+
     try {
-      // Get all pending transactions
+      // 1. PUSH PHASE: Get all pending transactions
       const pendingCarbon = await db.carbon_transactions.where('sync_status').equals('pending').toArray()
-      const pendingCsr = await db.csr_participations.where('sync_status').equals('pending').toArray()
-      const pendingComp = await db.compliance_issues.where('sync_status').equals('pending').toArray()
+      const pendingCsr    = await db.csr_participations.where('sync_status').equals('pending').toArray()
+      const pendingComp   = await db.compliance_issues.where('sync_status').equals('pending').toArray()
 
       const totalPending = pendingCarbon.length + pendingCsr.length + pendingComp.length
 
-      if (totalPending === 0) {
-        setTimeout(() => {
-          setSyncing(false)
-          setSyncMessage('🟢 Database is already synchronized with central cloud.')
-        }, 1000)
-        return
+      // Always push user XP and badges (using the fresh values)
+      const userPayload = {
+        id: 'u-001',
+        totalXP: currentXP,
+        badges: currentBadges
       }
 
-      setSyncMessage(`📤 Uploading ${totalPending} pending local audit logs...`)
-
-      // Attempt to batch post to backend server
+      setSyncMessage(`Pushing state to central cloud...`)
       const payload = {
         carbon_transactions: pendingCarbon,
         csr_participations: pendingCsr,
-        compliance_issues: pendingComp
+        compliance_issues: pendingComp,
+        user: userPayload
       }
 
       let serverResponded = false
       try {
-        const response = await fetch('http://localhost:5000/sync', {
+        const response = await fetch(syncUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         })
         if (response.ok) {
           serverResponded = true
+          // Mark pushed items as synced in Dexie
+          await db.transaction('rw', db.carbon_transactions, db.csr_participations, db.compliance_issues, async () => {
+            for (let item of pendingCarbon) {
+              await db.carbon_transactions.update(item.id, { sync_status: 'synced' })
+            }
+            for (let item of pendingCsr) {
+              await db.csr_participations.update(item.id, { sync_status: 'synced' })
+            }
+            for (let item of pendingComp) {
+              await db.compliance_issues.update(item.id, { sync_status: 'synced' })
+            }
+          })
         }
       } catch (err) {
-        console.warn("Backend server not responding. Falling back to local offline simulation helper...", err)
+        console.warn("Backend server connection failed during push phase:", err)
       }
 
-      // If server works, or using simulator fallback
-      setTimeout(async () => {
-        // Resolve status locally
+      // 2. PULL PHASE: Download database changes from server
+      setSyncMessage('📥 Downloading cloud database updates...')
+      let fetchedData = null
+      try {
+        const response = await fetch(syncUrl)
+        if (response.ok) {
+          fetchedData = await response.json()
+        }
+      } catch (err) {
+        console.warn("Backend server connection failed during pull phase:", err)
+      }
+
+      // 3. MERGE PHASE: Save downloaded records to IndexedDB using upserts
+      if (fetchedData) {
+        const { carbon_transactions, csr_participations, compliance_issues, user } = fetchedData
+
         await db.transaction('rw', db.carbon_transactions, db.csr_participations, db.compliance_issues, async () => {
-          for (let item of pendingCarbon) {
-            await db.carbon_transactions.update(item.id, { sync_status: 'synced' })
+          if (carbon_transactions && carbon_transactions.length > 0) {
+            const mapped = carbon_transactions.map(t => ({ ...t, sync_status: 'synced' }))
+            await db.carbon_transactions.bulkPut(mapped)
           }
-          for (let item of pendingCsr) {
-            await db.csr_participations.update(item.id, { sync_status: 'synced' })
+          if (csr_participations && csr_participations.length > 0) {
+            const mapped = csr_participations.map(p => ({ ...p, sync_status: 'synced' }))
+            await db.csr_participations.bulkPut(mapped)
           }
-          for (let item of pendingComp) {
-            await db.compliance_issues.update(item.id, { sync_status: 'synced' })
+          if (compliance_issues && compliance_issues.length > 0) {
+            const mapped = compliance_issues.map(i => ({ ...i, sync_status: 'synced' }))
+            await db.compliance_issues.bulkPut(mapped)
           }
         })
 
-        await loadDBData()
-        setSyncing(false)
-        setSyncMessage(serverResponded 
-          ? `✅ Successfully synced ${totalPending} items to MongoDB cloud database!` 
-          : `✅ Sync simulated! Updated ${totalPending} records in IndexedDB.`
+        // Merge User XP and Badges: always keep the HIGHER of local vs server,
+        // using functional updaters so React batching never loses the fresh local value.
+        if (user) {
+          setUserXP(prev => Math.max(prev, user.totalXP))
+          setUserBadges(prev => Array.from(new Set([...prev, ...user.badges])))
+        }
+      }
+
+      // 4. REFRESH PHASE
+      await loadDBData()
+      setSyncing(false)
+      if (fetchedData) {
+        setSyncMessage(totalPending > 0
+          ? `✅ Successfully synced! Pushed ${totalPending} items & updated local database.`
+          : '🟢 Local database is fully synchronized with central cloud.'
         )
-      }, 1500)
+      } else {
+        // Fallback offline simulator behavior
+        if (totalPending > 0) {
+          await db.transaction('rw', db.carbon_transactions, db.csr_participations, db.compliance_issues, async () => {
+            for (let item of pendingCarbon) {
+              await db.carbon_transactions.update(item.id, { sync_status: 'synced' })
+            }
+            for (let item of pendingCsr) {
+              await db.csr_participations.update(item.id, { sync_status: 'synced' })
+            }
+            for (let item of pendingComp) {
+              await db.compliance_issues.update(item.id, { sync_status: 'synced' })
+            }
+          })
+          await loadDBData()
+        }
+        setSyncMessage(`✅ Offline simulator resolved ${totalPending || '0'} pending logs.`)
+      }
 
     } catch (e) {
       setSyncing(false)
@@ -312,6 +413,17 @@ function App() {
       handleSync()
     }
   }, [online])
+
+  // Load and sync data from server on startup
+  useEffect(() => {
+    const init = async () => {
+      await loadDBData()
+      if (online) {
+        handleSync()
+      }
+    }
+    init()
+  }, [])
 
   // --- DYNAMIC CALCULATOR LOGIC FOR AUTOMATED EMISSION ENGINE ---
   const emissionFactors = {
@@ -360,12 +472,13 @@ function App() {
     if (isNaN(amt) || amt <= 0) return
 
     const newLog = {
-      id: crypto.randomUUID(),
+      id: generateUUID(),
       sourceType: carbonFuelSource,
       rawAmount: amt,
       calculatedEmissions: calculatedEmissionsInput,
       date: new Date().toISOString().split('T')[0],
-      sync_status: 'pending'
+      sync_status: 'pending',
+      createdAt: new Date().toISOString()
     }
 
     try {
@@ -374,10 +487,11 @@ function App() {
       await loadDBData()
       
       // Auto XP award
-      setUserXP(prev => prev + 25)
+      const newXP = userXP + 25
+      setUserXP(newXP)
       
       // Trigger background sync to server
-      handleSync()
+      handleSync(newXP)
     } catch (err) {
       console.error(err)
     }
@@ -397,12 +511,13 @@ function App() {
     if (!csrFile) return
 
     const newCsr = {
-      id: crypto.randomUUID(),
+      id: generateUUID(),
       userId: 'u-001',
       activityId: csrChallenge === 'Cycle to Work' ? 'ch-001' : csrChallenge === 'Avoid Single-Use Plastics' ? 'ch-002' : 'ch-003',
       proofFile: 'uploaded-base64-file-string',
       status: 'Submitted',
-      sync_status: 'pending'
+      sync_status: 'pending',
+      createdAt: new Date().toISOString()
     }
 
     try {
@@ -417,15 +532,18 @@ function App() {
       if (csrChallenge === 'Avoid Single-Use Plastics') xpReward = 100
       if (csrChallenge === 'Share Fleet Log') xpReward = 50
 
-      setUserXP(prev => prev + xpReward)
+      const newXP = userXP + xpReward
+      setUserXP(newXP)
       
       // Unlock new badge if user exceeds threshold
-      if (userXP + xpReward >= 1400 && !userBadges.includes('Eco Titan')) {
-        setUserBadges(prev => [...prev, 'Eco Titan'])
+      let updatedBadges = [...userBadges]
+      if (newXP >= 1400 && !userBadges.includes('Eco Titan')) {
+        updatedBadges = [...userBadges, 'Eco Titan']
+        setUserBadges(updatedBadges)
       }
 
       // Trigger background sync to server
-      handleSync()
+      handleSync(newXP, updatedBadges)
     } catch (err) {
       console.error(err)
     }
@@ -441,14 +559,16 @@ function App() {
       await loadDBData()
       
       // Governance change reward
+      let newXP = userXP
       if (nextStatus === 'Closed') {
-        setUserXP(prev => prev + 50)
+        newXP = userXP + 50
       } else {
-        setUserXP(prev => Math.max(0, prev - 50))
+        newXP = Math.max(0, userXP - 50)
       }
+      setUserXP(newXP)
 
       // Trigger background sync to server
-      handleSync()
+      handleSync(newXP)
     } catch (err) {
       console.error(err)
     }
@@ -759,7 +879,7 @@ function App() {
                     <div key={log.id} className="log-item">
                       <div className="log-item-details">
                         <span className="log-item-type">{log.sourceType} ({log.rawAmount} units)</span>
-                        <span className="log-item-date">{log.date}</span>
+                        <span className="log-item-date">{formatTimestamp(log.createdAt || log.date)}</span>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                         <span className="log-item-amount">+{log.calculatedEmissions} kg CO₂</span>
@@ -868,6 +988,31 @@ function App() {
                     Submit Proof & Claim XP
                   </button>
                 </form>
+
+                {/* CSR list */}
+                <div style={{ marginTop: '24px' }}>
+                  <span className="hardware-label">CSR Activity Trail ({csrLogs.length})</span>
+                  <div className="log-list" style={{ maxHeight: '150px', overflowY: 'auto' }}>
+                    {csrLogs.map(log => {
+                      const campaignName = log.activityId === 'ch-001' ? 'Cycle to Work' : log.activityId === 'ch-002' ? 'Avoid Single-Use Plastics' : log.activityId === 'ch-003' ? 'Share Fleet Log' : 'CSR Campaign'
+                      return (
+                        <div key={log.id} className="log-item">
+                          <div className="log-item-details">
+                            <span className="log-item-type">{campaignName}</span>
+                            <span className="log-item-date">{formatTimestamp(log.createdAt)}</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <span className="log-item-amount" style={{ color: 'var(--accent-blue)' }}>{log.status}</span>
+                            <div className="log-item-sync">
+                              <span className={`sync-dot ${log.sync_status === 'synced' ? 'synced' : 'pending'}`}></span>
+                              {log.sync_status === 'synced' ? 'Synced' : 'Pending'}
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
               </div>
 
             </div>
