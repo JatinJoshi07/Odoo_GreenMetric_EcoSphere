@@ -45,3 +45,10 @@ node_modules/
 .tmp/
 tmp/
 temp/
+
+# AI agent artifacts & plans
+implementation_plan.md
+task.md
+walkthrough.md
+.agents/
+
